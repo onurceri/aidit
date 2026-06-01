@@ -1,0 +1,67 @@
+{
+  "name": "aidit",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local web dashboard for managing AI agent MCP configs and skills across multiple tools. Localhost only, no cloud, no telemetry.",
+  "type": "module",
+  "license": "MIT",
+  "bin": {
+    "aidit": "./bin/aidit.js"
+  },
+  "main": "packages/backend/dist/index.js",
+  "files": [
+    "bin/",
+    "packages/backend/dist/",
+    "packages/frontend/dist/",
+    "LICENSE",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/onur/aidit.git"
+  },
+  "homepage": "https://github.com/onur/aidit",
+  "bugs": {
+    "url": "https://github.com/onur/aidit/issues"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "ai-agents",
+    "claude-desktop",
+    "cursor",
+    "windsurf",
+    "dashboard",
+    "local-first",
+    "localhost"
+  ],
+  "scripts": {
+    "dev": "pnpm --parallel -r run dev",
+    "build": "pnpm -r run build",
+    "lint": "eslint . --ext .ts,.tsx",
+    "format": "prettier --write .",
+    "typecheck": "pnpm -r run typecheck",
+    "test": "pnpm --filter @aidit/backend test -- --run"
+  },
+  "dependencies": {
+    "ajv": "^8.17.0",
+    "better-sqlite3": "^11.0.0",
+    "chokidar": "^3.6.0",
+    "express": "^4.21.0",
+    "fast-glob": "^3.3.0",
+    "js-yaml": "^4.1.0",
+    "jsonc-parser": "^3.3.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@typescript-eslint/eslint-plugin": "^7.16.0",
+    "@typescript-eslint/parser": "^7.16.0",
+    "eslint": "^8.57.0",
+    "eslint-config-prettier": "^9.1.0",
+    "prettier": "^3.3.0",
+    "typescript": "^5.5.0"
+  }
+}
