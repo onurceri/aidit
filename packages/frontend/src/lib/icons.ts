@@ -2,181 +2,74 @@ import {
   Monitor,
   Terminal,
   Code,
-  Bot,
   MousePointer,
   Wind,
-  Zap,
   Bird,
+  Zap,
   ArrowRight,
-  Wand,
-  Layout,
   Rocket,
   Lock,
   Puzzle,
   Cloud,
   Github,
   Brain,
-  Table,
-  PenTool,
-  FastForward,
-  Circle,
+  Sparkles,
+  Gem,
+  Ghost,
+  Waves,
+  Feather,
+  Flame,
+  Hexagon,
+  Cpu,
+  Atom,
+  Orbit,
+  Boxes,
+  Factory,
+  Layers,
+  FolderTree,
+  Moon,
+  Compass,
+  Gauge,
   type LucideIcon,
 } from 'lucide-react';
 
-export interface AgentFamilyMeta {
-  id: string;
-  label: string;
-  icon: LucideIcon;
-}
-
+/** Icon per agent id (ids come from packages/backend/src/registry/agents.ts). */
 export const AGENT_ICON_MAP: Record<string, LucideIcon> = {
-  'claude-desktop': Monitor,
   'claude-code': Terminal,
+  'claude-desktop': Monitor,
+  codex: Hexagon,
+  antigravity: Orbit,
+  'gemini-cli': Gem,
+  'github-copilot-cli': Github,
+  'vscode-copilot': Code,
   cursor: MousePointer,
   windsurf: Wind,
-  'vscode-copilot': Code,
-  goose: Bird,
-  cline: Zap,
-  'roo-code': Zap,
-  continue: ArrowRight,
-  aider: Wand,
-  zed: Layout,
-  trae: Rocket,
-  opencode: Lock,
-  augment: Puzzle,
+  kiro: Ghost,
   'amazon-q': Cloud,
-  'github-copilot-cli': Github,
-  supermaven: Brain,
-  tabnine: Table,
-  jetbrains: PenTool,
-  warp: FastForward,
-  void: Circle,
+  cline: Zap,
+  'roo-code': Rocket,
+  'kilo-code': Gauge,
+  continue: ArrowRight,
+  zed: Feather,
+  opencode: Lock,
+  crush: Sparkles,
+  amp: Flame,
+  goose: Bird,
+  'qwen-code': Brain,
+  factory: Factory,
+  augment: Puzzle,
+  junie: Atom,
+  warp: Waves,
+  'mistral-vibe': Layers,
+  kimi: Moon,
+  grok: Cpu,
+  trae: Compass,
+  'lm-studio': Boxes,
+  'agent-skills': FolderTree,
 };
 
 export const DEFAULT_AGENT_ICON = Code;
 
-const DEFAULT_AGENT_FAMILY: AgentFamilyMeta = {
-  id: 'standalone',
-  label: 'Standalone',
-  icon: DEFAULT_AGENT_ICON,
-};
-
-export const AGENT_FAMILY_MAP: Record<string, AgentFamilyMeta> = {
-  'claude-desktop': {
-    id: 'claude',
-    label: 'Claude',
-    icon: Bot,
-  },
-  'claude-code': {
-    id: 'claude',
-    label: 'Claude',
-    icon: Bot,
-  },
-  'vscode-copilot': {
-    id: 'vscode',
-    label: 'VS Code',
-    icon: Code,
-  },
-  cursor: {
-    id: 'cursor',
-    label: 'Cursor',
-    icon: MousePointer,
-  },
-  windsurf: {
-    id: 'windsurf',
-    label: 'Windsurf',
-    icon: Wind,
-  },
-  goose: {
-    id: 'goose',
-    label: 'Goose',
-    icon: Bird,
-  },
-  cline: {
-    id: 'cline',
-    label: 'Cline',
-    icon: Zap,
-  },
-  'roo-code': {
-    id: 'roo',
-    label: 'Roo',
-    icon: Zap,
-  },
-  continue: {
-    id: 'continue',
-    label: 'Continue',
-    icon: ArrowRight,
-  },
-  aider: {
-    id: 'aider',
-    label: 'Aider',
-    icon: Wand,
-  },
-  zed: {
-    id: 'zed',
-    label: 'Zed',
-    icon: Layout,
-  },
-  trae: {
-    id: 'trae',
-    label: 'Trae',
-    icon: Rocket,
-  },
-  opencode: {
-    id: 'opencode',
-    label: 'OpenCode',
-    icon: Lock,
-  },
-  augment: {
-    id: 'augment',
-    label: 'Augment',
-    icon: Puzzle,
-  },
-  'amazon-q': {
-    id: 'amazon-q',
-    label: 'Amazon Q',
-    icon: Cloud,
-  },
-  'github-copilot-cli': {
-    id: 'github-copilot',
-    label: 'GitHub Copilot',
-    icon: Github,
-  },
-  supermaven: {
-    id: 'supermaven',
-    label: 'Supermaven',
-    icon: Brain,
-  },
-  tabnine: {
-    id: 'tabnine',
-    label: 'Tabnine',
-    icon: Table,
-  },
-  jetbrains: {
-    id: 'jetbrains',
-    label: 'JetBrains',
-    icon: PenTool,
-  },
-  warp: {
-    id: 'warp',
-    label: 'Warp',
-    icon: FastForward,
-  },
-  void: {
-    id: 'void',
-    label: 'Void',
-    icon: Circle,
-  },
-};
-
 export function getAgentIcon(agentId: string): LucideIcon {
   return AGENT_ICON_MAP[agentId] ?? DEFAULT_AGENT_ICON;
-}
-
-export function getAgentFamily(agentId: string): AgentFamilyMeta {
-  return AGENT_FAMILY_MAP[agentId] ?? {
-    ...DEFAULT_AGENT_FAMILY,
-    id: agentId,
-    label: agentId,
-  };
 }

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import rehypeHighlight from 'rehype-highlight';
+import remarkGfm from 'remark-gfm';
 import {
   Loader,
   AlertTriangle,
@@ -18,10 +19,13 @@ import { fetchSkillFile, saveSkillFile } from '../api/client';
 import type { SkillFile } from '../api/client';
 import type { SkillsDirResult } from '../api/client';
 import { SkillEditor } from './SkillEditor';
+import { displayPath } from '../lib/paths';
 import { useToast } from '../context/ToastContext';
 import 'highlight.js/styles/github-dark-dimmed.css';
 
 const REHYPE_PLUGINS = [rehypeHighlight];
+// GitHub-flavoured markdown: tables, task lists, strikethrough, autolinks.
+const REMARK_PLUGINS = [remarkGfm];
 const FRONTMATTER_RE = /^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/;
 
 function stripFrontmatter(markdown: string): string {
@@ -31,7 +35,7 @@ function stripFrontmatter(markdown: string): string {
 interface SkillPreviewProps {
   skill: SkillFile;
   group: SkillsDirResult;
-  onClose: () => void;
+  onClose?: () => void;
   onSaved?: () => void;
 }
 
@@ -85,10 +89,7 @@ export function SkillPreview({ skill, group, onClose, onSaved }: SkillPreviewPro
       await navigator.clipboard.writeText(skill.absolutePath);
       addToast('success', 'Path copied to clipboard');
     } catch (err) {
-      addToast(
-        'error',
-        err instanceof Error ? err.message : 'Failed to copy path to clipboard',
-      );
+      addToast('error', err instanceof Error ? err.message : 'Failed to copy path to clipboard');
     }
   }, [skill.absolutePath]);
 
@@ -104,105 +105,114 @@ export function SkillPreview({ skill, group, onClose, onSaved }: SkillPreviewPro
 
   if (editing && content !== null) {
     return (
-      <SkillEditor
-        filename={skill.filename}
-        initialContent={content}
-        onSave={handleSave}
-        onClose={onClose}
-      />
+      <div className="p-6 h-full flex flex-col">
+        <SkillEditor
+          filename={skill.filename}
+          initialContent={content}
+          onSave={handleSave}
+          onClose={() => setEditing(false)}
+        />
+      </div>
     );
   }
 
   return (
-    <div className="flex flex-col h-full">
-      <div className="flex items-center gap-2 pb-3 border-b border-border">
-        <FileText className="w-4 h-4 text-fg-2 flex-shrink-0" />
-        <span className="text-sm font-semibold text-fg truncate">{skill.filename}</span>
-        <div className="ml-auto flex items-center gap-1">
-          <button
-            onClick={() => setExpanded(true)}
-            className="btn-icon"
-            aria-label="Open in fullscreen reader"
-            title="Open in fullscreen reader"
-            disabled={loading || content === null}
-          >
-            <Maximize2 className="w-4 h-4" />
-          </button>
-          <button
-            onClick={onClose}
-            className="btn-icon"
-            aria-label="Close preview"
-          >
-            <X className="w-4 h-4" />
-          </button>
+    <div className="flex flex-col min-h-full">
+      <div className="sticky top-0 z-10 border-b border-border bg-bg/95 backdrop-blur-sm px-6 pt-5 pb-3">
+        <div className="flex items-start gap-3">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <h2 className="text-base font-semibold text-fg truncate">{skill.name}</h2>
+              {!writable ? (
+                <span className="badge" title="Global skills are read-only in aidit">
+                  <Lock className="w-3 h-3" />
+                  read-only
+                </span>
+              ) : null}
+            </div>
+            {skill.description ? (
+              <p className="mt-1 text-sm text-fg-2 line-clamp-2">{skill.description}</p>
+            ) : null}
+            <button
+              onClick={handleCopyPath}
+              className="group mt-1.5 flex items-center gap-1.5 max-w-full text-xs text-fg-3 hover:text-fg font-mono"
+              title="Copy path"
+            >
+              <FolderOpen className="w-3 h-3 flex-shrink-0" />
+              <span className="truncate">{displayPath(skill.absolutePath)}</span>
+              <Copy className="w-3 h-3 flex-shrink-0 opacity-0 group-hover:opacity-100" />
+            </button>
+          </div>
+          <div className="flex items-center gap-1 flex-shrink-0">
+            <div className="segmented mr-1">
+              <button
+                onClick={() => setViewRaw(false)}
+                className={`segment ${!viewRaw ? 'segment-active' : ''}`}
+              >
+                <Eye className="w-3 h-3" />
+                Preview
+              </button>
+              <button
+                onClick={() => setViewRaw(true)}
+                className={`segment ${viewRaw ? 'segment-active' : ''}`}
+              >
+                <EyeOff className="w-3 h-3" />
+                Source
+              </button>
+            </div>
+            {writable && content !== null ? (
+              <button onClick={() => setEditing(true)} className="btn-secondary btn-sm">
+                <PenLine className="w-3.5 h-3.5" />
+                Edit
+              </button>
+            ) : null}
+            <button
+              onClick={() => setExpanded(true)}
+              className="btn-icon"
+              aria-label="Open in fullscreen reader"
+              title="Fullscreen"
+              disabled={loading || content === null}
+            >
+              <Maximize2 className="w-4 h-4" />
+            </button>
+            {onClose ? (
+              <button onClick={onClose} className="btn-icon" aria-label="Close preview">
+                <X className="w-4 h-4" />
+              </button>
+            ) : null}
+          </div>
         </div>
       </div>
 
-      <div className="py-2 text-xs text-fg-2 flex items-center gap-1.5">
-        <FolderOpen className="w-3 h-3 flex-shrink-0" />
-        <span className="font-mono truncate" title={skill.absolutePath}>
-          {skill.absolutePath}
-        </span>
-      </div>
+      <div className="flex-1 px-6 py-5">
+        <div className="max-w-3xl">
+          {loading ? (
+            <div className="flex items-center justify-center py-12">
+              <Loader className="w-5 h-5 text-fg-2 animate-spin" />
+            </div>
+          ) : null}
 
-      <div className="flex items-center gap-2 py-2 border-t border-border">
-        {!writable ? (
-          <span
-            className="flex items-center gap-1 text-xs text-fg-2"
-            title="Shared/global skills are read-only"
-          >
-            <Lock className="w-3 h-3" />
-            Read-only
-          </span>
-        ) : null}
-        <button
-          onClick={() => setViewRaw((v) => !v)}
-          className="btn-ghost btn-sm"
-        >
-          {viewRaw ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
-          {viewRaw ? 'Rendered' : 'Raw'}
-        </button>
-        <div className="flex-1" />
-        <button
-          onClick={handleCopyPath}
-          className="btn-ghost btn-sm"
-        >
-          <Copy className="w-3.5 h-3.5" />
-          Copy path
-        </button>
-        {writable && content !== null ? (
-          <button onClick={() => setEditing(true)} className="btn-secondary btn-sm">
-            <PenLine className="w-3.5 h-3.5" />
-            Edit
-          </button>
-        ) : null}
-      </div>
+          {error ? (
+            <div className="flex flex-col items-center gap-2 py-8">
+              <AlertTriangle className="w-8 h-8 text-fg-3" />
+              <p className="text-sm text-fg-2 text-center">{error}</p>
+            </div>
+          ) : null}
 
-      <div className="flex-1 overflow-auto py-4">
-        {loading ? (
-          <div className="flex items-center justify-center py-12">
-            <Loader className="w-5 h-5 text-fg-2 animate-spin" />
-          </div>
-        ) : null}
+          {content && viewRaw ? (
+            <pre className="font-mono text-xs bg-surface-2 border border-border p-4 rounded-md overflow-x-auto whitespace-pre-wrap text-fg">
+              {content}
+            </pre>
+          ) : null}
 
-        {error ? (
-          <div className="flex flex-col items-center gap-2 py-8">
-            <AlertTriangle className="w-8 h-8 text-fg-3" />
-            <p className="text-sm text-fg-2 text-center">{error}</p>
-          </div>
-        ) : null}
-
-        {content && viewRaw ? (
-          <pre className="font-mono text-xs bg-surface-2 p-4 rounded-md overflow-x-auto whitespace-pre-wrap text-fg">
-            {content}
-          </pre>
-        ) : null}
-
-        {renderedContent && !viewRaw ? (
-          <article className="md-surface">
-            <ReactMarkdown rehypePlugins={REHYPE_PLUGINS}>{renderedContent}</ReactMarkdown>
-          </article>
-        ) : null}
+          {renderedContent && !viewRaw ? (
+            <article className="md-surface">
+              <ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS}>
+                {renderedContent}
+              </ReactMarkdown>
+            </article>
+          ) : null}
+        </div>
       </div>
 
       {expanded && content ? (
@@ -215,9 +225,9 @@ export function SkillPreview({ skill, group, onClose, onSaved }: SkillPreviewPro
           <div className="relative w-full max-w-4xl max-h-full bg-surface border border-border rounded-md shadow-md flex flex-col overflow-hidden">
             <div className="flex items-center gap-2 px-5 py-3 border-b border-border flex-shrink-0">
               <FileText className="w-4 h-4 text-fg-2 flex-shrink-0" />
-              <span className="text-sm font-semibold text-fg truncate">{skill.filename}</span>
+              <span className="text-sm font-semibold text-fg truncate">{skill.name}</span>
               <span className="text-xs text-fg-3 font-mono truncate hidden sm:inline">
-                {skill.absolutePath}
+                {displayPath(skill.absolutePath)}
               </span>
               <button
                 onClick={() => setExpanded(false)}
@@ -235,7 +245,9 @@ export function SkillPreview({ skill, group, onClose, onSaved }: SkillPreviewPro
                 </pre>
               ) : (
                 <article className="md-surface md-surface--lg">
-                  <ReactMarkdown rehypePlugins={REHYPE_PLUGINS}>{renderedContent ?? ''}</ReactMarkdown>
+                  <ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS}>
+                    {renderedContent ?? ''}
+                  </ReactMarkdown>
                 </article>
               )}
             </div>

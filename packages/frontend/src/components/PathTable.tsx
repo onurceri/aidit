@@ -43,7 +43,12 @@ function StatusDot({ entry, status }: { entry: PathEntry; status?: PathStatus })
 
   if (status.found) {
     return (
-      <span title={status.resolved + (status.matches.length > 1 ? ` (${status.matches.length} matches)` : '')} className="inline-flex items-center cursor-help">
+      <span
+        title={
+          status.resolved + (status.matches.length > 1 ? ` (${status.matches.length} matches)` : '')
+        }
+        className="inline-flex items-center cursor-help"
+      >
         <span className="w-2.5 h-2.5 rounded-full bg-fg" />
       </span>
     );
@@ -223,10 +228,14 @@ export function PathTable({
                     {entry.source === 'builtin' ? (
                       <Lock className="w-3 h-3 text-fg-3 flex-shrink-0" />
                     ) : null}
-                    <div className="min-w-0 flex-1">{renderTextCell(entry, 'label', entry.label)}</div>
+                    <div className="min-w-0 flex-1">
+                      {renderTextCell(entry, 'label', entry.label)}
+                    </div>
                   </div>
                 </td>
-                <td className="px-3 py-2 max-w-64">{renderTextCell(entry, 'path', entry.path, true)}</td>
+                <td className="px-3 py-2 max-w-64">
+                  {renderTextCell(entry, 'path', entry.path, true)}
+                </td>
                 <td className="px-3 py-2">{renderTypeCell(entry)}</td>
                 <td className="px-3 py-2">{renderTextCell(entry, 'agent', entry.agent ?? '')}</td>
                 <td className="px-3 py-2">

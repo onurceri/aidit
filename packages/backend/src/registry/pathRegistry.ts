@@ -1,13 +1,14 @@
 import {
   getAllEntries,
   getEntryById,
-  insertEntry,
   upsertEntry,
+  deleteEntry,
   replaceAll,
   type PathRegistryRow,
   type PathRegistryInput,
 } from '../db/pathRegistry.js';
 import { BUILTIN_PATHS } from './builtins.js';
+import { transaction } from '../db/db.js';
 import { resolvePath } from '../scanner/pathResolver.js';
 
 export interface PathEntry {
@@ -32,19 +33,6 @@ export interface ResolvedPathEntry extends PathEntry {
 
 const REGISTRY_VERSION = 1;
 
-const BUILTIN_PATH_MIGRATIONS = [
-  {
-    id: 'claude-code-global-commands',
-    from: '~/.claude/commands',
-    to: '~/.claude/skills',
-  },
-  {
-    id: 'claude-code-project-commands',
-    from: '.claude/commands',
-    to: '.claude/skills',
-  },
-] as const;
-
 function rowToEntry(row: PathRegistryRow): PathEntry {
   return {
     id: row.id,
@@ -58,34 +46,23 @@ function rowToEntry(row: PathRegistryRow): PathEntry {
   };
 }
 
+/**
+ * Brings built-in entries in line with the current release: new built-ins are added,
+ * changed ones are updated (keeping the user's enabled flag) and retired ones removed.
+ * User-defined entries are never touched.
+ */
 export function initializeRegistry(): void {
-  const existing = getAllEntries();
-  if (existing.length > 0) {
-    for (const migration of BUILTIN_PATH_MIGRATIONS) {
-      const entry = getEntryById(migration.id);
-      if (!entry || entry.source !== 'builtin' || entry.path !== migration.from) {
-        continue;
-      }
-
-      upsertEntry({
-        id: entry.id,
-        label: entry.label,
-        path: migration.to,
-        type: entry.type,
-        agent: entry.agent,
-        scope: entry.scope,
-        source: 'builtin',
-        enabled: entry.enabled === 1,
-        sort_order: entry.sort_order,
-      });
+  const builtinIds = new Set(BUILTIN_PATHS.map((entry) => entry.id));
+  transaction(() => {
+    for (const row of getAllEntries()) {
+      if (row.source === 'builtin' && !builtinIds.has(row.id)) deleteEntry(row.id);
     }
-
-    return;
-  }
-
-  for (const entry of BUILTIN_PATHS) {
-    insertEntry(entry);
-  }
+    for (const builtin of BUILTIN_PATHS) {
+      const existing = getEntryById(builtin.id);
+      if (existing && existing.source !== 'builtin') continue;
+      upsertEntry({ ...builtin, enabled: existing ? existing.enabled === 1 : builtin.enabled });
+    }
+  });
 }
 
 export function loadRegistry(): PathRegistry {

@@ -1,7 +1,15 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Command } from 'cmdk';
-import { Search, Zap, BookOpen, GitCompare, Settings, Database, LayoutDashboard } from 'lucide-react';
+import {
+  Search,
+  Zap,
+  BookOpen,
+  GitCompare,
+  Settings,
+  Database,
+  LayoutDashboard,
+} from 'lucide-react';
 import { useScan } from '../hooks/useScan';
 import { getAgentIcon } from '../lib/icons';
 import type { AgentResult } from '../api/client';
@@ -13,6 +21,9 @@ interface Action {
   keywords: string[];
   onSelect: () => void;
 }
+
+/** Dispatch on `window` to open the palette from a button. */
+export const OPEN_PALETTE_EVENT = 'aidit:open-palette';
 
 export function CommandPalette() {
   const [open, setOpen] = useState(false);
@@ -31,8 +42,13 @@ export function CommandPalette() {
       }
     }
 
+    const onOpenRequest = () => setOpen(true);
     document.addEventListener('keydown', onKeyDown);
-    return () => document.removeEventListener('keydown', onKeyDown);
+    window.addEventListener(OPEN_PALETTE_EVENT, onOpenRequest);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener(OPEN_PALETTE_EVENT, onOpenRequest);
+    };
   }, [open]);
 
   const runAction = useCallback((fn: () => void) => {
@@ -143,9 +159,7 @@ export function CommandPalette() {
             </div>
 
             <Command.List className="max-h-80 overflow-y-auto p-2">
-              {!hasResults && (
-                <div className="py-10 text-center text-sm text-fg-3">No results</div>
-              )}
+              {!hasResults && <div className="py-10 text-center text-sm text-fg-3">No results</div>}
 
               {filteredActions.length > 0 && (
                 <Command.Group

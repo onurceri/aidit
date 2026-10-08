@@ -1,0 +1,77 @@
+name: Bug report
+description: Something is broken or behaves unexpectedly
+title: '[bug] '
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for taking the time to report a bug. Please search existing issues first.
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: A clear description of the bug, including the full error message if there is one.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Run `aidit start`
+        2. Open the MCP page for Cursor
+        3. Toggle a server
+        4. See error
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: input
+    id: agent
+    attributes:
+      label: Affected agent / config file
+      description: Which agent and file are involved?
+      placeholder: Cursor — ~/.cursor/mcp.json
+  - type: input
+    id: version
+    attributes:
+      label: aidit version
+      description: Output of `aidit --version`
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS
+        - Linux
+        - Windows (WSL)
+    validations:
+      required: true
+  - type: input
+    id: node
+    attributes:
+      label: Node.js version
+      description: Output of `node --version`
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: Install method
+      options:
+        - npx
+        - npm install -g
+        - Homebrew
+        - From source
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs and screenshots
+      description: Terminal output, browser console errors, or screenshots. Redact secrets (API keys in `env` blocks!).
+      render: text

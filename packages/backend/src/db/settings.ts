@@ -1,4 +1,4 @@
-import { db } from './db.js';
+import { prepare, transaction } from './db.js';
 
 interface SettingRow {
   key: string;
@@ -15,33 +15,32 @@ const DEFAULTS: Record<string, string> = {
   project_scan_dirs: '[]',
 };
 
-const upsertStmt = db.prepare(`
+const upsertStmt = prepare<object>(`
   INSERT INTO settings (key, value, updated_at)
   VALUES (@key, @value, @updated_at)
   ON CONFLICT(key) DO UPDATE SET value = @value, updated_at = @updated_at
 `);
 
-const getStmt = db.prepare<[string], SettingRow>(
+const getStmt = prepare<[string], SettingRow>(
   `SELECT key, value, updated_at FROM settings WHERE key = ?`,
 );
 
-const getAllStmt = db.prepare<[], SettingRow>(`SELECT key, value, updated_at FROM settings`);
+const getAllStmt = prepare<[], SettingRow>(`SELECT key, value, updated_at FROM settings`);
 
 export function initDefaultSettings(): void {
   const existing = new Set(getAllStmt.all().map((r) => r.key));
   const now = new Date().toISOString();
-  const insert = db.transaction(() => {
+  transaction(() => {
     for (const [key, value] of Object.entries(DEFAULTS)) {
       if (!existing.has(key)) {
         upsertStmt.run({ key, value, updated_at: now });
       }
     }
   });
-  insert();
 }
 
 export function getSetting<T = string>(key: string): T | undefined {
-  const row = getStmt.get(key);
+  const row = getStmt.get([key]);
   if (!row) return undefined;
   try {
     return JSON.parse(row.value) as T;

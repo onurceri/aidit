@@ -1,42 +1,41 @@
 ## Summary
 
-<!-- One or two sentences: what does this PR do and why? -->
+<!-- What does this PR change, and why? -->
 
 ## Related issue
 
-<!-- Link the issue this PR closes, e.g. "Closes #123". If none, write "n/a". -->
+<!-- e.g. "Closes #123". Write "n/a" if there is none. -->
 
 ## Type of change
 
 - [ ] Bug fix
 - [ ] New feature
+- [ ] Agent support (registry / paths / MCP dialect)
 - [ ] Breaking change
 - [ ] Documentation
-- [ ] Refactor / cleanup
-- [ ] Agent registry entry
+- [ ] Refactor / cleanup / tooling
 
-## How has this been tested?
+## How was this tested?
 
-<!-- Describe the tests you ran. -->
+<!-- Describe manual testing, and which agents/config files you tried. -->
+
+- [ ] `pnpm format:check`
 - [ ] `pnpm lint`
 - [ ] `pnpm typecheck`
+- [ ] `pnpm test`
 - [ ] `pnpm build`
-- [ ] `pnpm --filter @aidit/backend test`
-- [ ] Manual testing in dev (`pnpm dev`)
+- [ ] Manual testing with `pnpm dev`
 
 ## Checklist
 
-- [ ] My code follows the existing style (Prettier, ESLint)
-- [ ] I have added or updated tests where appropriate
-- [ ] I have updated documentation (README, product spec, task notes) as needed
-- [ ] For registry changes: I added an icon to `packages/frontend/src/lib/icons.ts`
-- [ ] No new outbound network calls were introduced
-- [ ] No new dependencies were added (or they are justified in the description)
+- [ ] PR title follows [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, …)
+- [ ] Tests added or updated where it makes sense
+- [ ] `CHANGELOG.md` updated under `[Unreleased]` for user-facing changes
+- [ ] README / CONTRIBUTING updated if behavior or setup changed
+- [ ] Agent support: paths link to vendor docs, catalog entry in `registry/agents.ts`, icon in `frontend/src/lib/icons.ts`, README table updated
+- [ ] No new outbound network calls or telemetry
+- [ ] New dependencies (if any) are justified below
 
-## Screenshots / recordings
+## Screenshots
 
-<!-- If this is a UI change, add before/after screenshots. -->
-
-## Additional context
-
-<!-- Anything else reviewers should know. -->
+<!-- Before/after for UI changes. -->

@@ -1,9 +1,10 @@
 import { existsSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { getEnabledPaths, type PathEntry } from '../registry/pathRegistry.js';
 import { insertScanRun } from '../db/scanRuns.js';
 import { upsertDiscoveredFile } from '../db/discoveredFiles.js';
-import { parseConfigFile, readConfigMeta } from './configParser.js';
-import { extractMcpServers } from './mcpExtractor.js';
+import { readConfig } from './readConfig.js';
+import { getAgentInfo } from '../registry/agents.js';
 import { scanSkillsDir } from './skillsScanner.js';
 import { isGlobPattern, expandGlob } from './pathResolver.js';
 import type { ScanResult, AgentResult, ConfigResult, SkillsDirResult, ScanError } from './types.js';
@@ -30,12 +31,14 @@ export function scan(options?: ScanOptions): ScanResult {
   const projectConfigs: ConfigResult[] = [];
   const agentMap = new Map<string, AgentResult>();
 
-  function ensureAgent(id: string, label: string): AgentResult {
+  function ensureAgent(id: string): AgentResult {
     const existing = agentMap.get(id);
     if (existing) return existing;
+    const info = getAgentInfo(id);
     const agent: AgentResult = {
       id,
-      label,
+      label: info?.label ?? id,
+      homepage: info?.homepage,
       found: false,
       configs: [],
       skillsDirs: [],
@@ -55,7 +58,8 @@ export function scan(options?: ScanOptions): ScanResult {
   }
 
   for (const entry of enabledPaths) {
-    const { id, label, path: rawPath, resolvedPath, type, scope, agent } = entry;
+    const { id, path: rawPath, resolvedPath, type, scope, agent } = entry;
+    if (agent) ensureAgent(agent);
 
     if (isGlobPattern(rawPath)) {
       let matches: string[];
@@ -73,18 +77,17 @@ export function scan(options?: ScanOptions): ScanResult {
       if (matches.length === 0) continue;
 
       for (const matchPath of matches) {
-        processConfigEntry(id, label, matchPath, type, scope, agent);
+        processConfigEntry(id, matchPath, type, scope, agent);
       }
     } else {
       if (!existsSync(resolvedPath)) continue;
 
-      processConfigEntry(id, label, resolvedPath, type, scope, agent);
+      processConfigEntry(id, resolvedPath, type, scope, agent);
     }
   }
 
   function processConfigEntry(
     id: string,
-    label: string,
     absolutePath: string,
     type: PathEntry['type'],
     scope: PathEntry['scope'],
@@ -92,68 +95,41 @@ export function scan(options?: ScanOptions): ScanResult {
   ): void {
     if (type === 'mcp-config') {
       try {
-        const parseResult = parseConfigFile(absolutePath);
-        const meta = readConfigMeta(absolutePath);
+        const configResult: ConfigResult = readConfig({
+          pathEntryId: id,
+          absolutePath,
+          scope,
+          agent: agent ?? null,
+        });
 
-        let mcpServers: ConfigResult['mcpServers'] = [];
-        if (parseResult.parsed) {
-          try {
-            mcpServers = extractMcpServers(parseResult.parsed);
-          } catch (err) {
-            errors.push({
-              pathEntryId: id,
-              absolutePath,
-              message: `MCP extraction failed: ${err instanceof Error ? err.message : String(err)}`,
-            });
-          }
-        }
-
-        let firstSeenAt: string | undefined;
         try {
           const df = upsertDiscoveredFile({
             path_entry_id: id,
             absolute_path: absolutePath,
             type: 'mcp-config',
             agent_id: agent ?? null,
-            last_modified: meta.lastModified,
-            size_bytes: meta.sizeBytes,
+            last_modified: configResult.lastModified,
+            size_bytes: configResult.sizeBytes,
           });
-          firstSeenAt = df.first_seen_at;
+          configResult.firstSeenAt = df.first_seen_at;
         } catch {
           // Non-fatal: discovered_files tracking failure shouldn't break scan
         }
 
-        const configResult: ConfigResult = {
-          pathEntryId: id,
-          absolutePath,
-          scope,
-          format: parseResult.format,
-          raw: parseResult.raw,
-          parsed: parseResult.parsed,
-          mcpServers,
-          parseError: parseResult.parseError,
-          lastModified: meta.lastModified,
-          sizeBytes: meta.sizeBytes,
-          firstSeenAt,
-        };
-
-        if (parseResult.parseError) {
+        if (configResult.parseError) {
           errors.push({
             pathEntryId: id,
             absolutePath,
-            message: `Parse error: ${parseResult.parseError}`,
+            message: `Parse error: ${configResult.parseError}`,
           });
         }
 
         if (agent) {
-          const agentResult = ensureAgent(agent, label);
+          const agentResult = ensureAgent(agent);
           agentResult.found = true;
           agentResult.configs.push(configResult);
-        } else {
-          projectConfigs.push(configResult);
         }
-
-        if (scope === 'project') {
+        if (!agent || scope === 'project') {
           projectConfigs.push(configResult);
         }
       } catch (err) {
@@ -183,7 +159,7 @@ export function scan(options?: ScanOptions): ScanResult {
         }
 
         if (agent) {
-          const agentResult = ensureAgent(agent, label);
+          const agentResult = ensureAgent(agent);
           agentResult.found = true;
           agentResult.skillsDirs.push(skillsResult);
         }
@@ -245,6 +221,7 @@ function buildResult(
   return {
     scannedAt,
     workingDirectory,
+    homeDir: homedir(),
     os: detectOS(),
     agents,
     projectConfigs,

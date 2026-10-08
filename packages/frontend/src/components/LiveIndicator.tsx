@@ -10,9 +10,7 @@ export function LiveIndicator() {
   return (
     <div className="flex items-center gap-2 px-2 h-8 text-xs text-fg-2">
       <span
-        className={`inline-block w-1.5 h-1.5 rounded-full ${
-          isConnected ? 'bg-fg' : 'bg-fg-3'
-        }`}
+        className={`status-dot ${isConnected ? 'status-ok' : isConnecting ? 'status-warn' : 'status-off'}`}
         aria-hidden
       />
       <span className="font-medium">{label}</span>

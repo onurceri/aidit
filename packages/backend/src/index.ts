@@ -1,7 +1,7 @@
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { createServer, type ServerOptions } from './server.js';
-import { attachWsServer } from './watcher/wsServer.js';
+import { attachWsServer, closeAllClients } from './watcher/wsServer.js';
 import { initializeWatcher } from './watcher/fileWatcher.js';
 import { initializeRegistry } from './registry/pathRegistry.js';
 import { scan } from './scanner/index.js';
@@ -24,10 +24,14 @@ export async function startServer(
     frontendDistPath: options.frontendDistPath,
     token: options.token,
   });
-  attachWsServer(httpServer);
+  attachWsServer(httpServer, {
+    token: options.token,
+    allowDevOrigin: !options.frontendDistPath,
+  });
   initializeWatcher();
 
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
+    httpServer.once('error', reject);
     httpServer.listen(port, HOST, () => {
       const isProduction = Boolean(options.frontendDistPath);
       if (isProduction) {
@@ -37,8 +41,10 @@ export async function startServer(
       }
       resolve({
         close: () => {
+          closeAllClients();
           return new Promise<void>((resolveClose) => {
             httpServer.close(() => resolveClose());
+            httpServer.closeAllConnections();
           });
         },
       });

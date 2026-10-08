@@ -1,9 +1,7 @@
-import Ajv from 'ajv';
-import { parse as parseJsonc, printParseErrorCode } from 'jsonc-parser';
-import type { ParseError } from 'jsonc-parser';
-import { load as parseYaml } from 'js-yaml';
-import { configSchema } from './schemas.js';
-import type { AgentConfig, McpServerConfig } from './schemas.js';
+import { parseContent } from '../scanner/formats.js';
+import { extractMcp } from '../scanner/mcpExtractor.js';
+import type { DialectId } from '../scanner/dialects.js';
+import type { ConfigFormat } from '../scanner/types.js';
 
 export interface ValidationError {
   field: string;
@@ -15,124 +13,41 @@ export interface ValidationResult {
   errors: ValidationError[];
 }
 
-const ajv = new Ajv({ allErrors: true, strict: false });
-const validate = ajv.compile(configSchema);
+const URL_PATTERN = /^https?:\/\/\S+$/i;
 
-function parseContent(
-  content: string,
-  format: 'json' | 'jsonc' | 'yaml',
-): { parsed: AgentConfig | null; error: string | null } {
-  if (format === 'yaml') {
-    try {
-      const parsed = parseYaml(content);
-      if (parsed === undefined || parsed === null) {
-        return { parsed: null, error: 'Content is empty' };
-      }
-      if (typeof parsed !== 'object' || Array.isArray(parsed)) {
-        return { parsed: null, error: 'Content must be a JSON object' };
-      }
-      return { parsed: parsed as AgentConfig, error: null };
-    } catch (err) {
-      return {
-        parsed: null,
-        error: `Invalid YAML: ${err instanceof Error ? err.message : String(err)}`,
-      };
-    }
-  }
-
-  const errors: ParseError[] = [];
-  const parsed = parseJsonc(content, errors, {
-    allowTrailingComma: true,
-    allowEmptyContent: true,
-  });
-
-  if (errors.length > 0) {
-    const messages = errors.map((e) => printParseErrorCode(e.error));
-    return { parsed: null, error: `Invalid JSON: ${messages.join('; ')}` };
-  }
-
-  if (parsed === null || parsed === undefined) {
-    return { parsed: null, error: 'Content is empty or contains only comments' };
-  }
-
-  if (typeof parsed !== 'object' || Array.isArray(parsed)) {
-    return { parsed: null, error: 'Content must be a JSON object' };
-  }
-
-  return { parsed: parsed as AgentConfig, error: null };
-}
-
-function deriveFieldPath(path: string): string {
-  if (!path) return 'root';
-  const cleaned = path.replace(/^\//, '');
-  return cleaned || 'root';
-}
-
-const URL_PATTERN = /^https?:\/\/.+/i;
-
-function validateServerEntries(mcpServers: Record<string, McpServerConfig>): ValidationError[] {
-  const errors: ValidationError[] = [];
-
-  for (const [name, server] of Object.entries(mcpServers)) {
-    if (!server || typeof server !== 'object') {
-      errors.push({
-        field: `mcpServers.${name}`,
-        message: `Server "${name}" must be an object`,
-      });
-      continue;
-    }
-
-    const hasCommand = typeof server.command === 'string' && server.command.trim().length > 0;
-    const hasUrl = typeof server.url === 'string' && server.url.trim().length > 0;
-
-    if (!hasCommand && !hasUrl) {
-      errors.push({
-        field: `mcpServers.${name}`,
-        message: `Server "${name}" must have either "command" or "url"`,
-      });
-      continue;
-    }
-
-    if (hasUrl) {
-      const url = server.url!.trim();
-      if (!URL_PATTERN.test(url)) {
-        errors.push({
-          field: `mcpServers.${name}.url`,
-          message: `Server "${name}" has invalid URL: must start with http:// or https://`,
-        });
-      }
-    }
-  }
-
-  return errors;
-}
-
+/**
+ * Validates config text before it is written: it must parse in its format, and every
+ * editable MCP server must be runnable (a command for stdio, an http(s) URL otherwise).
+ */
 export function validateConfig(
   content: string,
-  format: 'json' | 'jsonc' | 'yaml',
+  format: ConfigFormat,
+  dialect?: DialectId | null,
 ): ValidationResult {
-  const parseResult = parseContent(content, format);
-  if (parseResult.error) {
-    return { valid: false, errors: [{ field: 'root', message: parseResult.error }] };
+  const { parsed, error } = parseContent(content, format);
+  if (error || !parsed) {
+    return { valid: false, errors: [{ field: 'root', message: error ?? 'Invalid content' }] };
   }
 
-  const parsed = parseResult.parsed!;
-
-  const schemaValid = validate(parsed);
+  const { servers, dialect: resolved } = extractMcp(parsed, dialect);
   const errors: ValidationError[] = [];
+  const collection = resolved ?? 'mcpServers';
 
-  if (!schemaValid) {
-    for (const err of validate.errors ?? []) {
-      errors.push({
-        field: deriveFieldPath(err.instancePath),
-        message: err.message ?? 'Schema validation failed',
-      });
+  for (const server of servers) {
+    if (!server.control.canEdit) continue;
+    const field = `${server.control.collectionPath || collection}.${server.name}`;
+    if (server.transport === 'stdio' && !server.command?.trim()) {
+      errors.push({ field, message: `Server "${server.name}" needs a command` });
+    } else if (server.transport === 'sse' || server.transport === 'http') {
+      if (!server.url || !URL_PATTERN.test(server.url.trim())) {
+        errors.push({
+          field: `${field}.url`,
+          message: `Server "${server.name}" needs a URL starting with http:// or https://`,
+        });
+      }
+    } else if (server.transport === 'unknown' && !server.command && !server.url) {
+      errors.push({ field, message: `Server "${server.name}" must have a command or a URL` });
     }
-  }
-
-  if (parsed.mcpServers && typeof parsed.mcpServers === 'object') {
-    const entryErrors = validateServerEntries(parsed.mcpServers as Record<string, McpServerConfig>);
-    errors.push(...entryErrors);
   }
 
   return { valid: errors.length === 0, errors };

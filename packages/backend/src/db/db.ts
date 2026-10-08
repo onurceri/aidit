@@ -1,22 +1,74 @@
-import Database, { type Database as DatabaseType } from 'better-sqlite3';
-import { mkdirSync, readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { homedir } from 'node:os';
-import { fileURLToPath } from 'node:url';
+import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
+import { mkdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { DATA_DIR } from '../dataDir.js';
+import { MIGRATIONS } from './migrations.js';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
+type Params = object;
 
-const DB_DIR = join(homedir(), '.config', 'aidit');
-const DB_PATH = join(DB_DIR, 'aidit.db');
+export interface Statement<P extends Params, R> {
+  run(params?: P): { changes: number | bigint; lastInsertRowid: number | bigint };
+  get(params?: P): R | undefined;
+  all(params?: P): R[];
+}
 
-mkdirSync(DB_DIR, { recursive: true });
+function openDatabase(): DatabaseSync {
+  const location = process.env.AIDIT_DB_PATH ?? join(DATA_DIR, 'aidit.db');
+  if (location !== ':memory:') {
+    mkdirSync(DATA_DIR, { recursive: true });
+  }
+  const database = new DatabaseSync(location);
+  database.exec('PRAGMA journal_mode = WAL');
+  database.exec('PRAGMA foreign_keys = ON');
+  migrate(database);
+  return database;
+}
 
-const db: DatabaseType = new Database(DB_PATH);
+function migrate(database: DatabaseSync): void {
+  const row = database.prepare('PRAGMA user_version').get() as { user_version: number };
+  for (let version = row.user_version; version < MIGRATIONS.length; version++) {
+    database.exec('BEGIN');
+    try {
+      database.exec(MIGRATIONS[version]);
+      database.exec(`PRAGMA user_version = ${version + 1}`);
+      database.exec('COMMIT');
+    } catch (err) {
+      database.exec('ROLLBACK');
+      throw err;
+    }
+  }
+}
 
-db.pragma('journal_mode = WAL');
-db.pragma('foreign_keys = ON');
+export const db = openDatabase();
 
-const migrationSql = readFileSync(join(__dirname, 'migrations', '001_init.sql'), 'utf-8');
-db.exec(migrationSql);
+/**
+ * Typed wrapper around node:sqlite statements. Positional params are passed as
+ * an array, named params (`@name`) as an object.
+ */
+export function prepare<P extends Params = SQLInputValue[], R = unknown>(
+  sql: string,
+): Statement<P, R> {
+  const stmt = db.prepare(sql);
+  const spread = (params?: P): SQLInputValue[] => {
+    if (params === undefined) return [];
+    return Array.isArray(params)
+      ? (params as SQLInputValue[])
+      : [params as unknown as SQLInputValue];
+  };
+  return {
+    run: (params) => stmt.run(...spread(params)),
+    get: (params) => stmt.get(...spread(params)) as R | undefined,
+    all: (params) => stmt.all(...spread(params)) as R[],
+  };
+}
 
-export { db };
+export function transaction(fn: () => void): void {
+  db.exec('BEGIN');
+  try {
+    fn();
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+}

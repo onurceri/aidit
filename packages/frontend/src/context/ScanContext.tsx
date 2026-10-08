@@ -1,5 +1,6 @@
 import { createContext, useReducer, useEffect, useCallback, type ReactNode } from 'react';
 import { fetchScan, type ScanResult, ApiError } from '../api/client';
+import { setHomeDir } from '../lib/paths';
 
 interface ScanState {
   scanResult: ScanResult | null;
@@ -55,6 +56,7 @@ export function ScanProvider({ children }: { children: ReactNode }) {
     dispatch({ type: 'FETCH_START' });
     try {
       const result = await fetchScan();
+      setHomeDir(result.homeDir);
       dispatch({ type: 'FETCH_SUCCESS', payload: result });
     } catch (err) {
       const message =

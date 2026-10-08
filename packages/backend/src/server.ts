@@ -10,6 +10,7 @@ import pathsRouter from './routes/paths.js';
 import backupsRouter from './routes/backups.js';
 import settingsRouter from './routes/settings.js';
 import { ensureBackupBaseDir } from './writer/index.js';
+import { devCors, requestGuard, securityHeaders, tokenGuard } from './security.js';
 
 ensureBackupBaseDir();
 
@@ -24,34 +25,21 @@ export function createServer(options: ServerOptions = {}): {
 } {
   const app = express();
 
-  app.use(express.json());
-
   const isProduction = Boolean(options.frontendDistPath);
+  const security = { token: options.token, allowDevOrigin: !isProduction };
 
-  app.use((_req: Request, res: Response, next: NextFunction) => {
-    if (isProduction) {
-      res.header('Access-Control-Allow-Origin', '*');
-    } else {
-      res.header('Access-Control-Allow-Origin', 'http://localhost:3000');
-    }
-    res.header('Access-Control-Allow-Methods', 'GET, PUT, POST, PATCH, OPTIONS');
-    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-    if (_req.method === 'OPTIONS') {
-      res.sendStatus(204);
-      return;
-    }
-    next();
-  });
+  app.disable('x-powered-by');
+  app.use(securityHeaders);
+  if (!isProduction) {
+    app.use(devCors);
+  }
+  app.use(requestGuard(security));
+  app.use(express.json({ limit: '5mb' }));
 
   if (options.token) {
-    app.use((req: Request, res: Response, next: NextFunction) => {
-      const auth = req.headers.authorization;
-      if (!auth || auth !== `Bearer ${options.token}`) {
-        res.status(401).json({ error: 'Unauthorized' });
-        return;
-      }
-      next();
-    });
+    // Only the API is protected; the SPA shell and assets must load so the
+    // dashboard can pick up the token from the URL fragment.
+    app.use('/api', tokenGuard(options.token));
   }
 
   app.get('/health', (_req, res) => {

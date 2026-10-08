@@ -1,20 +1,16 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
-  ChevronDown,
-  ChevronRight,
-  FileText,
-  Clock,
-  HardDrive,
   Globe,
   FolderGit2,
-  PackageOpen,
+  BookOpen,
   Loader,
   AlertTriangle,
   RefreshCw,
-  BookOpen,
   Plus,
-  Lock,
-  PenLine,
+  Search,
+  ChevronRight,
+  ChevronsDownUp,
+  ChevronsUpDown,
 } from 'lucide-react';
 import {
   fetchSkills,
@@ -24,42 +20,54 @@ import {
   type SkillFile,
 } from '../api/client';
 import { useWatcher } from '../hooks/useWatcher';
-import { relativeTime } from '../lib/time';
+import { getAgentIcon } from '../lib/icons';
 import { SkillPreview } from '../components/SkillPreview';
 import { SkillEditor } from '../components/SkillEditor';
+import { displayPath } from '../lib/paths';
+import { Page, SplitView, EmptyState } from '../components/Layout';
 
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B';
-  const units = ['B', 'KB', 'MB', 'GB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(1024));
-  return `${(bytes / Math.pow(1024, i)).toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
+type Scope = 'global' | 'project';
+
+function groupTitle(group: SkillsDirResult): string {
+  if (group.agentLabel) return group.agentLabel;
+  const parts = group.absolutePath.replace(/\/+$/, '').split('/');
+  return parts.slice(-2).join('/');
 }
 
-function groupLabel(path: string): string {
-  const normalized = path.replace(/\/+$/, '');
-  const segments = normalized.split('/');
-  const last = segments[segments.length - 1];
-  if (!last) return 'Unknown';
-  const parent = segments[segments.length - 2];
-  if (last.toLowerCase() === 'skills' && parent) return parent;
-  return last;
+const COLLAPSED_KEY = 'aidit-skills-collapsed-v2';
+
+/** Null until the user collapses/expands something; then their choice is remembered. */
+function loadCollapsed(): Set<string> | null {
+  try {
+    const raw = window.localStorage.getItem(COLLAPSED_KEY);
+    return raw ? new Set(JSON.parse(raw) as string[]) : null;
+  } catch {
+    return null;
+  }
 }
 
-interface GroupState {
-  [key: string]: boolean;
+function saveCollapsed(collapsed: Set<string>): void {
+  try {
+    window.localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...collapsed]));
+  } catch {
+    /* storage unavailable — collapse state just won't persist */
+  }
+}
+
+function newSkillTemplate(name: string): string {
+  return `---\nname: ${name}\ndescription: What this skill does and when the agent should use it.\n---\n\n# ${name}\n\n## Instructions\n\n`;
 }
 
 export function Skills() {
   const [data, setData] = useState<SkillsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'global' | 'project'>('global');
-  const [selectedSkill, setSelectedSkill] = useState<SkillFile | null>(null);
-  const [selectedGroup, setSelectedGroup] = useState<SkillsDirResult | null>(null);
-  const [collapsedGroups, setCollapsedGroups] = useState<GroupState>({});
-  const [showNewSkill, setShowNewSkill] = useState(false);
-  const [newSkillDir, setNewSkillDir] = useState('');
-  const didInitializeTab = useRef(false);
+  const [scope, setScope] = useState<Scope>('global');
+  const [query, setQuery] = useState('');
+  const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  const [newSkillDir, setNewSkillDir] = useState<string | null>(null);
+  const [savedCollapsed, setCollapsed] = useState<Set<string> | null>(loadCollapsed);
+  const didInitScope = useRef(false);
   const { subscribe, unsubscribe } = useWatcher();
 
   const load = useCallback(async () => {
@@ -68,11 +76,9 @@ export function Skills() {
     try {
       const result = await fetchSkills();
       setData(result);
-      if (!didInitializeTab.current) {
-        if (result.global.length === 0 && result.project.length > 0) {
-          setActiveTab('project');
-        }
-        didInitializeTab.current = true;
+      if (!didInitScope.current) {
+        if (result.global.length === 0 && result.project.length > 0) setScope('project');
+        didInitScope.current = true;
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load skills');
@@ -86,308 +92,277 @@ export function Skills() {
   }, [load]);
 
   useEffect(() => {
-    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-
+    let timer: ReturnType<typeof setTimeout> | null = null;
     const handler = () => {
-      if (debounceTimer) clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(() => load(), 300);
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => load(), 300);
     };
-
     subscribe('config:changed', handler);
     return () => {
       unsubscribe('config:changed', handler);
-      if (debounceTimer) clearTimeout(debounceTimer);
+      if (timer) clearTimeout(timer);
     };
   }, [subscribe, unsubscribe, load]);
 
-  const groups = activeTab === 'global' ? (data?.global ?? []) : (data?.project ?? []);
-  const hasGlobal = (data?.global?.length ?? 0) > 0;
-  const hasProject = (data?.project?.length ?? 0) > 0;
-
-  useEffect(() => {
-    setSelectedSkill(null);
-    setSelectedGroup(null);
-    setShowNewSkill(false);
-  }, [activeTab]);
-
-  const toggleGroup = (path: string) =>
-    setCollapsedGroups((prev) => ({ ...prev, [path]: !prev[path] }));
-
-  const handleSelectSkill = (skill: SkillFile, group: SkillsDirResult) => {
-    if (selectedSkill?.absolutePath === skill.absolutePath) {
-      setSelectedSkill(null);
-      setSelectedGroup(null);
-    } else {
-      setSelectedSkill(skill);
-      setSelectedGroup(group);
-    }
+  const groups = useMemo(
+    () => (scope === 'global' ? data?.global : data?.project) ?? [],
+    [data, scope],
+  );
+  const counts = {
+    global: data?.global.reduce((n, g) => n + g.skills.length, 0) ?? 0,
+    project: data?.project.reduce((n, g) => n + g.skills.length, 0) ?? 0,
   };
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return groups
+      .map((group) => ({
+        group,
+        skills: q
+          ? group.skills.filter((s) =>
+              `${s.name} ${s.description} ${groupTitle(group)}`.toLowerCase().includes(q),
+            )
+          : group.skills,
+      }))
+      .filter((g) => g.skills.length > 0);
+  }, [groups, query]);
+
+  const selected = useMemo(() => {
+    for (const group of groups) {
+      const skill = group.skills.find((s) => s.absolutePath === selectedPath);
+      if (skill) return { skill, group };
+    }
+    return null;
+  }, [groups, selectedPath]);
+
+  // Keep a skill selected so the detail pane is never empty when there are skills.
+  useEffect(() => {
+    if (!selected && filtered[0]) setSelectedPath(filtered[0].skills[0].absolutePath);
+  }, [selected, filtered]);
+
+  const select = (skill: SkillFile) => {
+    setSelectedPath(skill.absolutePath);
+    setNewSkillDir(null);
+  };
+
+  const description = `${counts.global + counts.project} skills across ${(data?.global.length ?? 0) + (data?.project.length ?? 0)} folders`;
 
   if (loading && !data) {
     return (
-      <div className="flex items-center justify-center py-20">
-        <Loader className="w-5 h-5 text-fg-2 animate-spin" />
-      </div>
+      <Page title="Skills" description="Agent Skills (SKILL.md) on this machine" bare>
+        <div className="flex-1 flex items-center justify-center">
+          <Loader className="w-5 h-5 text-fg-2 animate-spin" />
+        </div>
+      </Page>
     );
   }
 
   if (error) {
     return (
-      <div className="p-6">
-        <div className="card p-4">
-          <div className="flex items-center gap-2">
-            <AlertTriangle className="w-4 h-4 text-fg" />
-            <p className="text-sm text-fg">{error}</p>
-          </div>
-          <button
-            onClick={load}
-            className="mt-3 btn-secondary btn-sm"
+      <Page title="Skills">
+        <div className="card">
+          <EmptyState
+            icon={AlertTriangle}
+            title="Couldn't load skills"
+            action={
+              <button onClick={load} className="btn-secondary btn-sm">
+                <RefreshCw className="w-3.5 h-3.5" />
+                Retry
+              </button>
+            }
           >
-            <RefreshCw className="w-3.5 h-3.5" />
-            Retry
-          </button>
+            {error}
+          </EmptyState>
         </div>
-      </div>
+      </Page>
     );
   }
 
-  const totalSkills = groups.reduce((sum, g) => sum + g.skills.length, 0);
-  const globalSkillCount = data?.global.reduce((s, g) => s + g.skills.length, 0) ?? 0;
-  const projectSkillCount = data?.project.reduce((s, g) => s + g.skills.length, 0) ?? 0;
+  // Default view: only the first folder is expanded.
+  const collapsed = savedCollapsed ?? new Set(groups.slice(1).map((g) => g.absolutePath));
+  const updateCollapsed = (next: Set<string>) => {
+    setCollapsed(next);
+    saveCollapsed(next);
+  };
+  const toggleGroup = (path: string) => {
+    const next = new Set(collapsed);
+    if (next.has(path)) next.delete(path);
+    else next.add(path);
+    updateCollapsed(next);
+  };
+  const searching = query.trim().length > 0;
+  const allCollapsed =
+    filtered.length > 0 && filtered.every((g) => collapsed.has(g.group.absolutePath));
+  const toggleAll = () => {
+    const next = new Set(collapsed);
+    for (const { group } of filtered) {
+      if (allCollapsed) next.delete(group.absolutePath);
+      else next.add(group.absolutePath);
+    }
+    updateCollapsed(next);
+  };
 
-  if (!data || (!hasGlobal && !hasProject) || totalSkills === 0) {
-    return (
-      <div className="w-full flex flex-col gap-6">
-        <header className="border-b border-border pb-4">
-          <h1 className="heading-page">Skills</h1>
-          <p className="mt-1 text-sm text-fg-2">
-            Index and audit agent instructions, context, and system prompts.
-          </p>
-        </header>
-
-        <div className="flex items-center gap-1 p-0.5 rounded-md border border-border bg-surface-2 w-fit">
-          {(['global', 'project'] as const).map((tab) => (
+  const aside = (
+    <>
+      <div className="p-3 space-y-2 border-b border-border">
+        <div className="segmented w-full">
+          {(['global', 'project'] as const).map((value) => (
             <button
-              key={tab}
-              onClick={() => setActiveTab(tab)}
-              className={`h-7 px-3 rounded text-xs font-medium transition-colors ${
-                activeTab === tab ? 'bg-surface text-fg' : 'text-fg-2 hover:text-fg'
-              }`}
+              key={value}
+              onClick={() => {
+                setScope(value);
+                setSelectedPath(null);
+                setNewSkillDir(null);
+              }}
+              className={`segment flex-1 justify-center ${scope === value ? 'segment-active' : ''}`}
             >
-              {tab === 'global' ? 'Global' : 'Project'}
+              {value === 'global' ? (
+                <Globe className="w-3 h-3" />
+              ) : (
+                <FolderGit2 className="w-3 h-3" />
+              )}
+              {value === 'global' ? 'Global' : 'Project'}
+              <span className="text-fg-3 tabular-nums">{counts[value]}</span>
             </button>
           ))}
         </div>
-
-        <div className="card flex flex-col items-center justify-center py-20 text-center">
-          <PackageOpen className="w-10 h-10 mb-3 text-fg-3" />
-          <h3 className="text-sm font-semibold text-fg">No skills found</h3>
-          <p className="mt-1 text-sm text-fg-2 max-w-sm">
-            {activeTab === 'global'
-              ? 'No skills directories mounted in target registry.'
-              : 'Workspace scan is unconfigured or inactive.'}
-          </p>
+        <div className="flex items-center gap-1.5">
+          <label className="relative block flex-1">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-fg-3" />
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Filter skills…"
+              className="input h-8 pl-8"
+            />
+          </label>
+          <button
+            type="button"
+            onClick={toggleAll}
+            disabled={filtered.length === 0 || searching}
+            className="btn-icon flex-shrink-0"
+            title={allCollapsed ? 'Expand all' : 'Collapse all'}
+            aria-label={allCollapsed ? 'Expand all groups' : 'Collapse all groups'}
+          >
+            {allCollapsed ? (
+              <ChevronsUpDown className="w-4 h-4" />
+            ) : (
+              <ChevronsDownUp className="w-4 h-4" />
+            )}
+          </button>
         </div>
       </div>
-    );
-  }
+
+      <div className="flex-1 min-h-0 overflow-y-auto px-2 pb-3">
+        {filtered.length === 0 ? (
+          <p className="px-2.5 py-6 text-xs text-fg-3">
+            {query
+              ? `No skills match “${query}”.`
+              : scope === 'project'
+                ? 'No project skills in this directory.'
+                : 'No global skills found.'}
+          </p>
+        ) : null}
+        {filtered.map(({ group, skills }) => {
+          const Icon = group.agentId ? getAgentIcon(group.agentId) : BookOpen;
+          // While filtering, always show matches.
+          const open = searching || !collapsed.has(group.absolutePath);
+          return (
+            <div key={group.absolutePath}>
+              <div className="section-label section-label-sticky" title={group.absolutePath}>
+                <button
+                  type="button"
+                  onClick={() => toggleGroup(group.absolutePath)}
+                  disabled={searching}
+                  aria-expanded={open}
+                  className="flex flex-1 items-center gap-1.5 normal-case tracking-normal text-xs font-medium text-fg-2 hover:text-fg min-w-0 text-left disabled:opacity-100 disabled:cursor-default"
+                >
+                  <ChevronRight
+                    className={`w-3 h-3 flex-shrink-0 text-fg-3 transition-transform ${open ? 'rotate-90' : ''}`}
+                  />
+                  <Icon className="w-3.5 h-3.5 flex-shrink-0" strokeWidth={1.75} />
+                  <span className="truncate">{groupTitle(group)}</span>
+                </button>
+                <span className="flex items-center gap-1">
+                  {scope === 'project' ? (
+                    <button
+                      onClick={() => setNewSkillDir(group.absolutePath)}
+                      className="btn-icon w-5 h-5"
+                      title={`New skill in ${displayPath(group.absolutePath)}`}
+                      aria-label="New skill"
+                    >
+                      <Plus className="w-3 h-3" />
+                    </button>
+                  ) : null}
+                  {skills.length}
+                </span>
+              </div>
+              {open
+                ? skills.map((skill) => {
+                    const active = skill.absolutePath === selectedPath && !newSkillDir;
+                    return (
+                      <button
+                        key={skill.absolutePath}
+                        onClick={() => select(skill)}
+                        className={`list-row flex-col !items-start !gap-0 ${active ? 'list-row-active' : ''}`}
+                      >
+                        <span
+                          className={`w-full truncate text-sm ${active ? 'text-fg font-medium' : 'text-fg'}`}
+                        >
+                          {skill.name}
+                        </span>
+                        {skill.description ? (
+                          <span className="w-full truncate text-xs text-fg-3">
+                            {skill.description}
+                          </span>
+                        ) : null}
+                      </button>
+                    );
+                  })
+                : null}
+            </div>
+          );
+        })}
+      </div>
+    </>
+  );
 
   return (
-    <div className="w-full flex flex-col gap-6">
-      <header className="border-b border-border pb-4">
-        <h1 className="heading-page">Skills</h1>
-        <p className="mt-1 text-sm text-fg-2">
-          Index and audit agent instructions, context, and system prompts.
-        </p>
-      </header>
-
-      <div className="flex items-center gap-1 p-0.5 rounded-md border border-border bg-surface-2 w-fit">
-        <button
-          onClick={() => setActiveTab('global')}
-          className={`h-7 px-3 rounded text-xs font-medium transition-colors flex items-center gap-2 ${
-            activeTab === 'global' ? 'bg-surface text-fg' : 'text-fg-2 hover:text-fg'
-          }`}
-        >
-          <Globe className="w-3.5 h-3.5" />
-          Global
-          {hasGlobal ? <span className="text-fg-3">{globalSkillCount}</span> : null}
-        </button>
-        <button
-          onClick={() => setActiveTab('project')}
-          className={`h-7 px-3 rounded text-xs font-medium transition-colors flex items-center gap-2 ${
-            activeTab === 'project' ? 'bg-surface text-fg' : 'text-fg-2 hover:text-fg'
-          }`}
-        >
-          <FolderGit2 className="w-3.5 h-3.5" />
-          Project
-          {hasProject ? <span className="text-fg-3">{projectSkillCount}</span> : null}
-        </button>
-      </div>
-
-      <div className="flex flex-col lg:flex-row gap-6">
-        <div
-          className={`flex-1 min-w-0 ${selectedSkill ? 'lg:max-w-[45%] lg:h-[calc(100vh-240px)] lg:overflow-auto lg:pr-2' : 'w-full'}`}
-        >
-          <div className="space-y-4">
-            {groups.length === 0 ? (
-              <div className="card flex flex-col items-center justify-center py-16 text-center">
-                <BookOpen className="w-8 h-8 mb-3 text-fg-3" />
-                <h3 className="text-sm font-semibold text-fg">No skill folders</h3>
-                <p className="mt-1 text-sm text-fg-2 max-w-sm">
-                  {activeTab === 'global'
-                    ? 'Mount global skill folders in the path registry.'
-                    : 'Workspace local scan is unconfigured or inactive.'}
-                </p>
-              </div>
-            ) : null}
-
-            {groups.map((group) => {
-              const groupKey = group.absolutePath;
-              const isCollapsed = collapsedGroups[groupKey] ?? false;
-              const label = groupLabel(group.absolutePath);
-              const scopeLabel = group.scope === 'global' ? 'Global' : 'Project';
-
-              return (
-                <div key={groupKey} className="card overflow-hidden">
-                  <button
-                    onClick={() => toggleGroup(groupKey)}
-                    className="flex items-center gap-3 w-full text-left p-3 hover:bg-hover transition-colors"
-                  >
-                    {isCollapsed ? (
-                      <ChevronRight className="w-4 h-4 text-fg-2" />
-                    ) : (
-                      <ChevronDown className="w-4 h-4 text-fg-2" />
-                    )}
-                    <span className="text-sm font-medium text-fg">{label}</span>
-                    <span className="badge">{scopeLabel}</span>
-                    <span className="text-xs text-fg-2 ml-auto">
-                      {group.skills.length} {group.skills.length === 1 ? 'file' : 'files'}
-                    </span>
-                  </button>
-
-                  {!isCollapsed ? (
-                    <div className="border-t border-border p-2 space-y-1 bg-surface-2">
-                      {group.skills.map((skill) => {
-                        const isSkillSelected = selectedSkill?.absolutePath === skill.absolutePath;
-                        const isWritable = group.scope === 'project';
-                        return (
-                          <button
-                            key={skill.absolutePath}
-                            onClick={() => handleSelectSkill(skill, group)}
-                            className={`w-full text-left p-2.5 rounded-md transition-colors ${
-                              isSkillSelected ? 'bg-surface-3' : 'hover:bg-surface'
-                            }`}
-                          >
-                            <div className="flex items-center gap-2">
-                              <FileText
-                                className={`w-3.5 h-3.5 flex-shrink-0 ${
-                                  isSkillSelected ? 'text-fg' : 'text-fg-2'
-                                }`}
-                              />
-                              <span
-                                className={`text-sm truncate ${
-                                  isSkillSelected ? 'text-fg font-medium' : 'text-fg-2'
-                                }`}
-                              >
-                                {skill.filename}
-                              </span>
-                              <span
-                                className="flex-shrink-0 ml-auto"
-                                title={isWritable ? 'Writable' : 'Protected global file'}
-                              >
-                                {isWritable ? (
-                                  <PenLine className="w-3 h-3 text-fg-2" />
-                                ) : (
-                                  <Lock className="w-3 h-3 text-fg-3" />
-                                )}
-                              </span>
-                            </div>
-                            <div className="flex items-center gap-3 mt-1.5 text-xs text-fg-2">
-                              <span className="flex items-center gap-1">
-                                <HardDrive className="w-3 h-3" />
-                                {formatBytes(skill.sizeBytes)}
-                              </span>
-                              <span className="flex items-center gap-1">
-                                <Clock className="w-3 h-3" />
-                                {relativeTime(skill.lastModified)}
-                              </span>
-                            </div>
-                            {skill.previewLines.length > 0 ? (
-                              <div className="mt-2 space-y-0.5">
-                                {skill.previewLines.slice(0, 2).map((line, i) => (
-                                  <p
-                                    key={i}
-                                    className="text-xs text-fg-2 font-mono truncate leading-snug"
-                                  >
-                                    {line || '\u00A0'}
-                                  </p>
-                                ))}
-                              </div>
-                            ) : null}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  ) : null}
-                </div>
-              );
-            })}
-
-            {activeTab === 'project' && groups.length > 0 ? (
-              <button
-                onClick={() => {
-                  const firstDir = groups[0]?.absolutePath;
-                  setNewSkillDir(firstDir ?? '');
-                  setShowNewSkill(true);
-                }}
-                className="w-full h-10 rounded-md border border-dashed border-border-strong text-sm text-fg-2 hover:text-fg hover:border-fg transition-colors flex items-center justify-center gap-2"
-              >
-                <Plus className="w-4 h-4" />
-                New skill
-              </button>
-            ) : null}
-          </div>
-        </div>
-
-        {selectedSkill && selectedGroup ? (
-          <div className="flex-1 min-w-0 card p-5 min-h-[500px] lg:h-[calc(100vh-240px)] flex flex-col">
-            <SkillPreview
-              skill={selectedSkill}
-              group={selectedGroup}
-              onClose={() => {
-                setSelectedSkill(null);
-                setSelectedGroup(null);
+    <Page title="Skills" description={description} bare>
+      <SplitView aside={aside}>
+        {newSkillDir ? (
+          <div className="p-6 h-full flex flex-col">
+            <SkillEditor
+              filename=""
+              initialContent={newSkillTemplate('my-skill')}
+              isNew
+              skillsDir={newSkillDir}
+              onSave={async (content, name) => {
+                const slug = (name ?? 'my-skill').trim().replace(/[^a-zA-Z0-9._-]+/g, '-');
+                const path = `${newSkillDir}/${slug}/SKILL.md`;
+                await saveSkillFile(path, content);
+                setNewSkillDir(null);
+                setSelectedPath(path);
+                await load();
               }}
-              onSaved={load}
+              onClose={() => setNewSkillDir(null)}
             />
           </div>
-        ) : null}
-
-        {showNewSkill && newSkillDir ? (
-          <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
-            <div className="w-full max-w-2xl bg-surface border border-border rounded-md overflow-hidden shadow-md">
-              <SkillEditor
-                filename="my-skill.md"
-                initialContent={`# New Skill\n\n## Description\n\nAdd your skill description here.\n\n## Instructions\n\n`}
-                isNew
-                skillsDir={newSkillDir}
-                onSave={async (content, newFilename) => {
-                  const finalName = newFilename ?? 'my-skill.md';
-                  const skillPath = `${newSkillDir}/${finalName}`;
-                  await saveSkillFile(skillPath, content);
-                  setShowNewSkill(false);
-                  setNewSkillDir('');
-                  await load();
-                }}
-                onClose={() => {
-                  setShowNewSkill(false);
-                  setNewSkillDir('');
-                }}
-              />
-            </div>
-          </div>
-        ) : null}
-      </div>
-    </div>
+        ) : selected ? (
+          <SkillPreview
+            key={selected.skill.absolutePath}
+            skill={selected.skill}
+            group={selected.group}
+            onSaved={load}
+          />
+        ) : (
+          <EmptyState icon={BookOpen} title="No skills here yet">
+            Skills are folders containing a <code className="code">SKILL.md</code>. aidit looks in
+            every agent&apos;s skills directory, including the shared{' '}
+            <code className="code">~/.agents/skills</code>.
+          </EmptyState>
+        )}
+      </SplitView>
+    </Page>
   );
 }

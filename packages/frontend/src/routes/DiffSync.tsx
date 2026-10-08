@@ -13,14 +13,14 @@ import {
 import { useScan } from '../hooks/useScan';
 import { ConfirmModal } from '../components/ConfirmModal';
 import { DiffView } from '../components/DiffView';
-import { patchConfig, ApiError } from '../api/client';
+import { changeServer, toServerInput, ApiError } from '../api/client';
 import type { ConfigResult, McpServer } from '../api/client';
-import { canInsertServerIntoConfig, insertServerIntoConfig } from '../lib/mcpConfig';
 import {
   getServerBadgeClass,
   getServerBadgeLabel,
   getServerPreviewText,
 } from '../lib/mcpPresentation';
+import { Page } from '../components/Layout';
 import { useToast } from '../context/ToastContext';
 
 interface ComparedServer {
@@ -67,10 +67,6 @@ function commandPreview(server: McpServer): string {
   return cmd.length > 50 ? cmd.slice(0, 50) + '...' : cmd;
 }
 
-function serializeConfig(obj: Record<string, unknown>): string {
-  return JSON.stringify(obj, null, 2) + '\n';
-}
-
 function ServerInfo({ server }: { server: McpServer }) {
   return (
     <div className="space-y-1">
@@ -101,8 +97,8 @@ interface SyncChange {
 }
 
 function canCopyServerToConfig(config: ConfigResult | null, server: McpServer | null): boolean {
-  if (!config?.parsed || typeof config.parsed !== 'object' || !server) return false;
-  return canInsertServerIntoConfig(config.parsed as Record<string, unknown>, server);
+  if (!config?.canAddServers || !server) return false;
+  return toServerInput(server) !== null;
 }
 
 export function DiffSync() {
@@ -198,19 +194,9 @@ export function DiffSync() {
 
       setCopyingServer(serverName);
       try {
-        if (!toPrimary.parsed || typeof toPrimary.parsed !== 'object') {
-          throw new Error('Target config is not parseable');
-        }
-
-        const cloned = insertServerIntoConfig(
-          toPrimary.parsed as Record<string, unknown>,
-          server,
-        );
-
-        const format =
-          toPrimary.format === 'yaml' ? 'json' : (toPrimary.format as 'json' | 'jsonc');
-        const content = serializeConfig(cloned);
-        await patchConfig(toPrimary.pathEntryId, content, format);
+        const input = toServerInput(server);
+        if (!input) throw new Error(`"${serverName}" cannot be copied to another agent`);
+        await changeServer(toPrimary.pathEntryId, { op: 'upsert', server: input, trigger: 'sync' });
         setSyncErrors((prev) => {
           const next = new Map(prev);
           next.delete(serverName);
@@ -256,27 +242,18 @@ export function DiffSync() {
     let successCount = 0;
     let failCount = 0;
 
-    if (!targetPrimary.parsed || typeof targetPrimary.parsed !== 'object') {
-      setSyncing(false);
-      addToast('error', 'Target config is not parseable');
-      return;
-    }
-
-    const runningConfig = JSON.parse(JSON.stringify(targetPrimary.parsed));
-    const format =
-      targetPrimary.format === 'yaml' ? 'json' : (targetPrimary.format as 'json' | 'jsonc');
-
     for (const { name } of copyableOnlyInSource) {
       const server = sourceServers.find((s) => s.name === name);
       if (!server) continue;
 
       try {
-        const nextConfig = insertServerIntoConfig(runningConfig, server);
-        Object.keys(runningConfig).forEach((key) => delete runningConfig[key]);
-        Object.assign(runningConfig, nextConfig);
-
-        const content = serializeConfig(runningConfig);
-        await patchConfig(targetPrimary.pathEntryId, content, format);
+        const input = toServerInput(server);
+        if (!input) throw new Error('Server cannot be copied');
+        await changeServer(targetPrimary.pathEntryId, {
+          op: 'upsert',
+          server: input,
+          trigger: 'sync',
+        });
         successCount++;
       } catch (err) {
         const message =
@@ -300,33 +277,45 @@ export function DiffSync() {
         `${successCount}/${successCount + failCount} servers synced. ${failCount} failed.`,
       );
     }
-  }, [copyableOnlyInSource, sourceServers, sourceAgent, targetAgent, targetPrimary, refresh, addToast]);
+  }, [
+    copyableOnlyInSource,
+    sourceServers,
+    sourceAgent,
+    targetAgent,
+    targetPrimary,
+    refresh,
+    addToast,
+  ]);
 
   if (loading && !scanResult) {
     return (
-      <div className="flex items-center justify-center py-20">
-        <Loader className="w-5 h-5 text-fg-2 animate-spin" />
-      </div>
+      <Page title="Compare & sync">
+        <div className="flex items-center justify-center py-20">
+          <Loader className="w-5 h-5 text-fg-2 animate-spin" />
+        </div>
+      </Page>
     );
   }
 
   if (error) {
     return (
-      <div className="p-6">
+      <Page title="Compare & sync">
         <div className="card p-4">
           <p className="text-sm text-fg">{error}</p>
         </div>
-      </div>
+      </Page>
     );
   }
 
   if (!scanResult || scanResult.agents.length === 0) {
     return (
-      <div className="card flex flex-col items-center justify-center py-20">
-        <PackageOpen className="w-12 h-12 mb-4 text-fg-3" />
-        <h3 className="text-sm font-semibold text-fg">No agents found</h3>
-        <p className="mt-1 text-sm text-fg-2">Run a scan to discover agents.</p>
-      </div>
+      <Page title="Compare & sync">
+        <div className="card flex flex-col items-center justify-center py-20">
+          <PackageOpen className="w-12 h-12 mb-4 text-fg-3" />
+          <h3 className="text-sm font-semibold text-fg">No agents found</h3>
+          <p className="mt-1 text-sm text-fg-2">Run a scan to discover agents.</p>
+        </div>
+      </Page>
     );
   }
 
@@ -342,316 +331,313 @@ export function DiffSync() {
     onlyInTarget.length === 0;
 
   return (
-    <div className="w-full flex flex-col gap-6">
-      <header className="border-b border-border pb-4">
-        <h1 className="heading-page">Compare & Sync</h1>
-        <p className="mt-1 text-sm text-fg-2">
-          Audit and sync MCP server configurations between agents.
-        </p>
-      </header>
-
-      <div className="card p-5 flex flex-col md:flex-row items-stretch md:items-end gap-3">
-        <div className="flex-1 min-w-0">
-          <label className="label">Source</label>
-          <select
-            className="select"
-            value={sourceAgentId}
-            onChange={(e) => setSourceAgentId(e.target.value)}
-          >
-            <option value="">Select a source agent…</option>
-            {foundAgents.map((agent) => (
-              <option key={agent.id} value={agent.id}>
-                {agent.label} ({mergeServers(agent.configs).length} servers)
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div className="hidden md:flex items-center justify-center w-10 h-10 text-fg-2 self-end mb-0.5">
-          <ArrowRightLeft className="w-4 h-4" />
-        </div>
-
-        <div className="flex-1 min-w-0">
-          <label className="label">Target</label>
-          <select
-            className="select"
-            value={targetAgentId}
-            onChange={(e) => setTargetAgentId(e.target.value)}
-          >
-            <option value="">Select a target agent…</option>
-            {foundAgents
-              .filter((a) => a.id !== sourceAgentId)
-              .map((agent) => (
+    <Page
+      title="Compare & sync"
+      description="Diff MCP servers between two agents and copy them across formats"
+    >
+      <div className="flex flex-col gap-6">
+        <div className="card p-5 flex flex-col md:flex-row items-stretch md:items-end gap-3">
+          <div className="flex-1 min-w-0">
+            <label className="label">Source</label>
+            <select
+              className="select"
+              value={sourceAgentId}
+              onChange={(e) => setSourceAgentId(e.target.value)}
+            >
+              <option value="">Select a source agent…</option>
+              {foundAgents.map((agent) => (
                 <option key={agent.id} value={agent.id}>
                   {agent.label} ({mergeServers(agent.configs).length} servers)
                 </option>
               ))}
-          </select>
-        </div>
-      </div>
+            </select>
+          </div>
 
-      {!sourceAgentId || !targetAgentId ? (
-        <div className="card flex flex-col items-center justify-center py-20 text-center">
-          <ArrowRightLeft className="w-10 h-10 mb-3 text-fg-3" />
-          <h3 className="text-sm font-semibold text-fg">Choose source and target</h3>
-          <p className="mt-1 text-sm text-fg-2 max-w-sm">
-            Pick a source and target to compare their MCP server configurations.
-          </p>
-        </div>
-      ) : null}
+          <div className="hidden md:flex items-center justify-center w-10 h-10 text-fg-2 self-end mb-0.5">
+            <ArrowRightLeft className="w-4 h-4" />
+          </div>
 
-      {sourceAgentId && targetAgentId && sourceAgent && targetAgent ? (
-        <>
-          {copyableOnlyInSource.length > 0 ? (
-            <div className="card p-4 flex items-center justify-between gap-3 border-border-strong">
-              <p className="text-sm text-fg">
-                <span className="font-medium">{copyableOnlyInSource.length}</span> copyable
-                server{copyableOnlyInSource.length === 1 ? '' : 's'} detected in{' '}
-                {sourceAgent.label}
-              </p>
-              <button
-                onClick={() => setShowSyncConfirm(true)}
-                disabled={syncing}
-                className="btn-primary"
-              >
-                {syncing ? (
-                  <Loader className="w-3.5 h-3.5 animate-spin" />
-                ) : (
-                  <ArrowRight className="w-3.5 h-3.5" />
-                )}
-                Sync all
-              </button>
-            </div>
-          ) : null}
-
-          {onlyInSource.length > copyableOnlyInSource.length ? (
-            <div className="card p-3">
-              <p className="text-xs text-fg-2">
-                {onlyInSource.length - copyableOnlyInSource.length} source-only entries can't be
-                synced because the target config format doesn't support their MCP entry type.
-              </p>
-            </div>
-          ) : null}
-
-          {sourceServers.length === 0 || targetServers.length === 0 ? (
-            <div className="card p-3 flex items-center gap-3">
-              <PackageOpen className="w-4 h-4 text-fg-2 flex-shrink-0" />
-              {sourceServers.length === 0 && targetServers.length === 0 ? (
-                <p className="text-sm text-fg-2">Both configurations have zero servers.</p>
-              ) : sourceServers.length === 0 ? (
-                <p className="text-sm text-fg-2">
-                  {sourceAgent.label} has zero servers. Target-only entries can be cloned left.
-                </p>
-              ) : (
-                <p className="text-sm text-fg-2">
-                  {targetAgent.label} has zero servers. Source-only entries can be cloned right.
-                </p>
-              )}
-            </div>
-          ) : null}
-
-          {bothIdentical ? (
-            <div className="card p-8 flex flex-col items-center justify-center text-center">
-              <Check className="w-8 h-8 mb-3 text-fg" />
-              <p className="text-sm font-semibold text-fg">Configurations are identical</p>
-              <p className="mt-1 text-xs text-fg-2">No sync changes registered.</p>
-            </div>
-          ) : null}
-
-          {compared.length > 0 && !bothIdentical ? (
-            <div className="space-y-2">
-              <div className="grid grid-cols-[1fr_auto_1fr] gap-4 px-4 py-2 text-xs text-fg-2">
-                <div className="truncate">Source: {sourceAgent.label}</div>
-                <div className="w-28 text-center">Status</div>
-                <div className="truncate">Target: {targetAgent.label}</div>
-              </div>
-
-              {compared.map((row) => {
-                const isOnlySource = row.source && !row.target;
-                const isOnlyTarget = row.target && !row.source;
-                const isBoth = row.source && row.target;
-                const isDifferent = isBoth && !serversEqual(row.source!, row.target!);
-                const isExpanded = expandedDiff === row.name;
-                const copyError = syncErrors.get(row.name);
-                const isCopying = copyingServer === row.name;
-                const canCopyToTarget = canCopyServerToConfig(targetPrimary, row.source);
-                const canCopyToSource = canCopyServerToConfig(sourcePrimary, row.target);
-
-                const status = isOnlySource
-                  ? 'Source only'
-                  : isOnlyTarget
-                    ? 'Target only'
-                    : isDifferent
-                      ? 'Mismatch'
-                      : 'In sync';
-
-                return (
-                  <div key={row.name} className="space-y-1">
-                    <div className="grid grid-cols-[1fr_auto_1fr] gap-4 px-4 py-3 rounded-md border border-border bg-surface items-start">
-                      <div className="min-w-0">
-                        {row.source ? (
-                          <ServerInfo server={row.source} />
-                        ) : (
-                          <span className="text-sm text-fg-3">—</span>
-                        )}
-                      </div>
-
-                      <div className="w-32 flex flex-col items-center gap-2">
-                        <span className="badge">{status}</span>
-                        {isOnlySource && targetPrimary && canCopyToTarget ? (
-                          <button
-                            onClick={() => copyServer(row.name, 'to-target')}
-                            disabled={isCopying}
-                            className="btn-secondary btn-sm w-full"
-                          >
-                            {isCopying ? (
-                              <Loader className="w-3.5 h-3.5 animate-spin" />
-                            ) : (
-                              <ArrowRight className="w-3.5 h-3.5" />
-                            )}
-                            Clone right
-                          </button>
-                        ) : null}
-                        {isOnlyTarget && sourcePrimary && canCopyToSource ? (
-                          <button
-                            onClick={() => copyServer(row.name, 'to-source')}
-                            disabled={isCopying}
-                            className="btn-secondary btn-sm w-full"
-                          >
-                            {isCopying ? (
-                              <Loader className="w-3.5 h-3.5 animate-spin" />
-                            ) : (
-                              <ArrowLeft className="w-3.5 h-3.5" />
-                            )}
-                            Clone left
-                          </button>
-                        ) : null}
-                        {((isOnlySource && targetPrimary && !canCopyToTarget) ||
-                          (isOnlyTarget && sourcePrimary && !canCopyToSource)) ? (
-                          <span
-                            className="flex items-center gap-1 text-[11px] text-fg-3"
-                            title="The destination config does not support this MCP entry structure"
-                          >
-                            <AlertTriangle className="w-3 h-3 flex-shrink-0" />
-                            Unsupported
-                          </span>
-                        ) : null}
-                        {isDifferent ? (
-                          <button
-                            onClick={() => setExpandedDiff(isExpanded ? null : row.name)}
-                            className="btn-ghost btn-sm w-full"
-                          >
-                            {isExpanded ? (
-                              <ChevronDown className="w-3.5 h-3.5" />
-                            ) : (
-                              <ChevronRight className="w-3.5 h-3.5" />
-                            )}
-                            Compare
-                          </button>
-                        ) : null}
-                        {copyError ? (
-                          <div className="flex items-center gap-1 text-[11px] text-fg truncate max-w-full">
-                            <AlertTriangle className="w-3 h-3 flex-shrink-0" />
-                            <span className="truncate">{copyError}</span>
-                          </div>
-                        ) : null}
-                      </div>
-
-                      <div className="min-w-0">
-                        {row.target ? (
-                          <ServerInfo server={row.target} />
-                        ) : (
-                          <span className="text-sm text-fg-3">—</span>
-                        )}
-                      </div>
-                    </div>
-
-                    {isExpanded && isDifferent && row.source && row.target ? (
-                      <div className="ml-4 mr-4 card overflow-hidden">
-                        <div className="flex items-center justify-between px-4 py-2 border-b border-border bg-surface-2">
-                          <span className="text-xs font-medium text-fg-2">
-                            Differences in {row.name}
-                          </span>
-                          <div className="flex items-center gap-2">
-                            {canCopyToTarget ? (
-                              <button
-                                onClick={() => copyServer(row.name, 'to-target')}
-                                disabled={isCopying}
-                                className="btn-ghost btn-sm"
-                              >
-                                {isCopying ? (
-                                  <Loader className="w-3 h-3 animate-spin" />
-                                ) : (
-                                  <ArrowRight className="w-3 h-3" />
-                                )}
-                                Overwrite target
-                              </button>
-                            ) : null}
-                            {canCopyToSource ? (
-                              <button
-                                onClick={() => copyServer(row.name, 'to-source')}
-                                disabled={isCopying}
-                                className="btn-ghost btn-sm"
-                              >
-                                {isCopying ? (
-                                  <Loader className="w-3 h-3 animate-spin" />
-                                ) : (
-                                  <ArrowLeft className="w-3 h-3" />
-                                )}
-                                Overwrite source
-                              </button>
-                            ) : null}
-                          </div>
-                        </div>
-                        <DiffView
-                          oldJson={row.source.raw as Record<string, unknown>}
-                          newJson={row.target.raw as Record<string, unknown>}
-                          oldLabel={sourceAgent.label}
-                          newLabel={targetAgent.label}
-                        />
-                      </div>
-                    ) : null}
-                  </div>
-                );
-              })}
-            </div>
-          ) : null}
-
-          {compared.length === 0 && sourceServers.length === 0 && targetServers.length === 0 ? (
-            <div className="card flex flex-col items-center justify-center py-16 text-center">
-              <PackageOpen className="w-8 h-8 mb-3 text-fg-3" />
-              <p className="text-sm text-fg-2">No MCP servers to compare</p>
-            </div>
-          ) : null}
-
-          {syncErrors.size > 0 && !syncing ? (
-            <div className="card p-4 border-border-strong">
-              <p className="text-sm font-medium text-fg mb-2">Sync errors</p>
-              <ul className="space-y-1 text-sm text-fg-2">
-                {[...syncErrors.entries()].map(([name, err]) => (
-                  <li key={name} className="flex items-center gap-2">
-                    <AlertTriangle className="w-3.5 h-3.5 text-fg flex-shrink-0" />
-                    <span className="font-medium text-fg">{name}:</span>
-                    <span>{err}</span>
-                  </li>
+          <div className="flex-1 min-w-0">
+            <label className="label">Target</label>
+            <select
+              className="select"
+              value={targetAgentId}
+              onChange={(e) => setTargetAgentId(e.target.value)}
+            >
+              <option value="">Select a target agent…</option>
+              {foundAgents
+                .filter((a) => a.id !== sourceAgentId)
+                .map((agent) => (
+                  <option key={agent.id} value={agent.id}>
+                    {agent.label} ({mergeServers(agent.configs).length} servers)
+                  </option>
                 ))}
-              </ul>
-            </div>
-          ) : null}
-        </>
-      ) : null}
+            </select>
+          </div>
+        </div>
 
-      {showSyncConfirm && targetAgent ? (
-        <ConfirmModal
-          open={true}
-          title={`Sync all to ${targetAgent.label}`}
-          description={`This will copy ${syncChanges.length} server${syncChanges.length !== 1 ? 's' : ''} from ${sourceAgent?.label ?? 'source'} to ${targetAgent.label}.`}
-          confirmLabel={`Sync ${syncChanges.length} server${syncChanges.length !== 1 ? 's' : ''}`}
-          variant="default"
-          onConfirm={handleSyncAll}
-          onCancel={() => setShowSyncConfirm(false)}
-        />
-      ) : null}
-    </div>
+        {!sourceAgentId || !targetAgentId ? (
+          <div className="card flex flex-col items-center justify-center py-20 text-center">
+            <ArrowRightLeft className="w-10 h-10 mb-3 text-fg-3" />
+            <h3 className="text-sm font-semibold text-fg">Choose source and target</h3>
+            <p className="mt-1 text-sm text-fg-2 max-w-sm">
+              Pick a source and target to compare their MCP server configurations.
+            </p>
+          </div>
+        ) : null}
+
+        {sourceAgentId && targetAgentId && sourceAgent && targetAgent ? (
+          <>
+            {copyableOnlyInSource.length > 0 ? (
+              <div className="card p-4 flex items-center justify-between gap-3 border-border-strong">
+                <p className="text-sm text-fg">
+                  <span className="font-medium">{copyableOnlyInSource.length}</span> copyable server
+                  {copyableOnlyInSource.length === 1 ? '' : 's'} detected in {sourceAgent.label}
+                </p>
+                <button
+                  onClick={() => setShowSyncConfirm(true)}
+                  disabled={syncing}
+                  className="btn-primary"
+                >
+                  {syncing ? (
+                    <Loader className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  )}
+                  Sync all
+                </button>
+              </div>
+            ) : null}
+
+            {onlyInSource.length > copyableOnlyInSource.length ? (
+              <div className="card p-3">
+                <p className="text-xs text-fg-2">
+                  {onlyInSource.length - copyableOnlyInSource.length} source-only entries can't be
+                  synced because the target config format doesn't support their MCP entry type.
+                </p>
+              </div>
+            ) : null}
+
+            {sourceServers.length === 0 || targetServers.length === 0 ? (
+              <div className="card p-3 flex items-center gap-3">
+                <PackageOpen className="w-4 h-4 text-fg-2 flex-shrink-0" />
+                {sourceServers.length === 0 && targetServers.length === 0 ? (
+                  <p className="text-sm text-fg-2">Both configurations have zero servers.</p>
+                ) : sourceServers.length === 0 ? (
+                  <p className="text-sm text-fg-2">
+                    {sourceAgent.label} has zero servers. Target-only entries can be cloned left.
+                  </p>
+                ) : (
+                  <p className="text-sm text-fg-2">
+                    {targetAgent.label} has zero servers. Source-only entries can be cloned right.
+                  </p>
+                )}
+              </div>
+            ) : null}
+
+            {bothIdentical ? (
+              <div className="card p-8 flex flex-col items-center justify-center text-center">
+                <Check className="w-8 h-8 mb-3 text-fg" />
+                <p className="text-sm font-semibold text-fg">Configurations are identical</p>
+                <p className="mt-1 text-xs text-fg-2">No sync changes registered.</p>
+              </div>
+            ) : null}
+
+            {compared.length > 0 && !bothIdentical ? (
+              <div className="space-y-2">
+                <div className="grid grid-cols-[1fr_auto_1fr] gap-4 px-4 py-2 text-xs text-fg-2">
+                  <div className="truncate">Source: {sourceAgent.label}</div>
+                  <div className="w-28 text-center">Status</div>
+                  <div className="truncate">Target: {targetAgent.label}</div>
+                </div>
+
+                {compared.map((row) => {
+                  const isOnlySource = row.source && !row.target;
+                  const isOnlyTarget = row.target && !row.source;
+                  const isBoth = row.source && row.target;
+                  const isDifferent = isBoth && !serversEqual(row.source!, row.target!);
+                  const isExpanded = expandedDiff === row.name;
+                  const copyError = syncErrors.get(row.name);
+                  const isCopying = copyingServer === row.name;
+                  const canCopyToTarget = canCopyServerToConfig(targetPrimary, row.source);
+                  const canCopyToSource = canCopyServerToConfig(sourcePrimary, row.target);
+
+                  const status = isOnlySource
+                    ? 'Source only'
+                    : isOnlyTarget
+                      ? 'Target only'
+                      : isDifferent
+                        ? 'Mismatch'
+                        : 'In sync';
+
+                  return (
+                    <div key={row.name} className="space-y-1">
+                      <div className="grid grid-cols-[1fr_auto_1fr] gap-4 px-4 py-3 rounded-md border border-border bg-surface items-start">
+                        <div className="min-w-0">
+                          {row.source ? (
+                            <ServerInfo server={row.source} />
+                          ) : (
+                            <span className="text-sm text-fg-3">—</span>
+                          )}
+                        </div>
+
+                        <div className="w-32 flex flex-col items-center gap-2">
+                          <span className="badge">{status}</span>
+                          {isOnlySource && targetPrimary && canCopyToTarget ? (
+                            <button
+                              onClick={() => copyServer(row.name, 'to-target')}
+                              disabled={isCopying}
+                              className="btn-secondary btn-sm w-full"
+                            >
+                              {isCopying ? (
+                                <Loader className="w-3.5 h-3.5 animate-spin" />
+                              ) : (
+                                <ArrowRight className="w-3.5 h-3.5" />
+                              )}
+                              Clone right
+                            </button>
+                          ) : null}
+                          {isOnlyTarget && sourcePrimary && canCopyToSource ? (
+                            <button
+                              onClick={() => copyServer(row.name, 'to-source')}
+                              disabled={isCopying}
+                              className="btn-secondary btn-sm w-full"
+                            >
+                              {isCopying ? (
+                                <Loader className="w-3.5 h-3.5 animate-spin" />
+                              ) : (
+                                <ArrowLeft className="w-3.5 h-3.5" />
+                              )}
+                              Clone left
+                            </button>
+                          ) : null}
+                          {(isOnlySource && targetPrimary && !canCopyToTarget) ||
+                          (isOnlyTarget && sourcePrimary && !canCopyToSource) ? (
+                            <span
+                              className="flex items-center gap-1 text-[11px] text-fg-3"
+                              title="The destination config does not support this MCP entry structure"
+                            >
+                              <AlertTriangle className="w-3 h-3 flex-shrink-0" />
+                              Unsupported
+                            </span>
+                          ) : null}
+                          {isDifferent ? (
+                            <button
+                              onClick={() => setExpandedDiff(isExpanded ? null : row.name)}
+                              className="btn-ghost btn-sm w-full"
+                            >
+                              {isExpanded ? (
+                                <ChevronDown className="w-3.5 h-3.5" />
+                              ) : (
+                                <ChevronRight className="w-3.5 h-3.5" />
+                              )}
+                              Compare
+                            </button>
+                          ) : null}
+                          {copyError ? (
+                            <div className="flex items-center gap-1 text-[11px] text-fg truncate max-w-full">
+                              <AlertTriangle className="w-3 h-3 flex-shrink-0" />
+                              <span className="truncate">{copyError}</span>
+                            </div>
+                          ) : null}
+                        </div>
+
+                        <div className="min-w-0">
+                          {row.target ? (
+                            <ServerInfo server={row.target} />
+                          ) : (
+                            <span className="text-sm text-fg-3">—</span>
+                          )}
+                        </div>
+                      </div>
+
+                      {isExpanded && isDifferent && row.source && row.target ? (
+                        <div className="ml-4 mr-4 card overflow-hidden">
+                          <div className="flex items-center justify-between px-4 py-2 border-b border-border bg-surface-2">
+                            <span className="text-xs font-medium text-fg-2">
+                              Differences in {row.name}
+                            </span>
+                            <div className="flex items-center gap-2">
+                              {canCopyToTarget ? (
+                                <button
+                                  onClick={() => copyServer(row.name, 'to-target')}
+                                  disabled={isCopying}
+                                  className="btn-ghost btn-sm"
+                                >
+                                  {isCopying ? (
+                                    <Loader className="w-3 h-3 animate-spin" />
+                                  ) : (
+                                    <ArrowRight className="w-3 h-3" />
+                                  )}
+                                  Overwrite target
+                                </button>
+                              ) : null}
+                              {canCopyToSource ? (
+                                <button
+                                  onClick={() => copyServer(row.name, 'to-source')}
+                                  disabled={isCopying}
+                                  className="btn-ghost btn-sm"
+                                >
+                                  {isCopying ? (
+                                    <Loader className="w-3 h-3 animate-spin" />
+                                  ) : (
+                                    <ArrowLeft className="w-3 h-3" />
+                                  )}
+                                  Overwrite source
+                                </button>
+                              ) : null}
+                            </div>
+                          </div>
+                          <DiffView
+                            oldJson={row.source.raw as Record<string, unknown>}
+                            newJson={row.target.raw as Record<string, unknown>}
+                            oldLabel={sourceAgent.label}
+                            newLabel={targetAgent.label}
+                          />
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : null}
+
+            {compared.length === 0 && sourceServers.length === 0 && targetServers.length === 0 ? (
+              <div className="card flex flex-col items-center justify-center py-16 text-center">
+                <PackageOpen className="w-8 h-8 mb-3 text-fg-3" />
+                <p className="text-sm text-fg-2">No MCP servers to compare</p>
+              </div>
+            ) : null}
+
+            {syncErrors.size > 0 && !syncing ? (
+              <div className="card p-4 border-border-strong">
+                <p className="text-sm font-medium text-fg mb-2">Sync errors</p>
+                <ul className="space-y-1 text-sm text-fg-2">
+                  {[...syncErrors.entries()].map(([name, err]) => (
+                    <li key={name} className="flex items-center gap-2">
+                      <AlertTriangle className="w-3.5 h-3.5 text-fg flex-shrink-0" />
+                      <span className="font-medium text-fg">{name}:</span>
+                      <span>{err}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+          </>
+        ) : null}
+
+        {showSyncConfirm && targetAgent ? (
+          <ConfirmModal
+            open={true}
+            title={`Sync all to ${targetAgent.label}`}
+            description={`This will copy ${syncChanges.length} server${syncChanges.length !== 1 ? 's' : ''} from ${sourceAgent?.label ?? 'source'} to ${targetAgent.label}.`}
+            confirmLabel={`Sync ${syncChanges.length} server${syncChanges.length !== 1 ? 's' : ''}`}
+            variant="default"
+            onConfirm={handleSyncAll}
+            onCancel={() => setShowSyncConfirm(false)}
+          />
+        ) : null}
+      </div>
+    </Page>
   );
 }

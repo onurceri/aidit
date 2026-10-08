@@ -1,5 +1,5 @@
 import { createContext, useReducer, useEffect, useCallback, useRef, type ReactNode } from 'react';
-import type { WsEvent } from '../api/client';
+import { getAuthToken, type WsEvent } from '../api/client';
 
 type WsStatus = 'connecting' | 'connected' | 'disconnected';
 
@@ -42,7 +42,9 @@ const INITIAL_BACKOFF = 1000;
 
 function buildWsUrl(): string {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${protocol}//${window.location.host}/ws/watch`;
+  const token = getAuthToken();
+  const query = token ? `?token=${encodeURIComponent(token)}` : '';
+  return `${protocol}//${window.location.host}/ws/watch${query}`;
 }
 
 export function WsProvider({ children }: { children: ReactNode }) {

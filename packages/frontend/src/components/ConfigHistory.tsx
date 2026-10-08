@@ -239,11 +239,7 @@ export function ConfigHistory({
       <div className="w-full max-w-3xl max-h-[90vh] bg-surface border border-border rounded-md shadow-md flex flex-col">
         <div className="flex items-center gap-2 px-4 py-3 border-b border-border">
           {viewState !== 'timeline' ? (
-            <button
-              onClick={handleBack}
-              className="btn-icon"
-              aria-label="Back to timeline"
-            >
+            <button onClick={handleBack} className="btn-icon" aria-label="Back to timeline">
               <ChevronLeft className="w-4 h-4" />
             </button>
           ) : null}
@@ -306,9 +302,7 @@ export function ConfigHistory({
                     >
                       <span
                         className={`absolute left-1 top-2 w-2.5 h-2.5 rounded-full border-2 ${
-                          isSelected
-                            ? 'bg-fg border-fg'
-                            : 'bg-surface border-fg-3'
+                          isSelected ? 'bg-fg border-fg' : 'bg-surface border-fg-3'
                         }`}
                       />
                       <div className="card overflow-hidden flex">
@@ -339,9 +333,7 @@ export function ConfigHistory({
                         >
                           <span
                             className={`w-4 h-4 rounded border flex items-center justify-center ${
-                              isSelected
-                                ? 'bg-fg border-fg text-accent-fg'
-                                : 'border-fg-3'
+                              isSelected ? 'bg-fg border-fg text-accent-fg' : 'border-fg-3'
                             }`}
                           >
                             {isSelected ? <Check className="w-3 h-3" /> : null}
@@ -368,9 +360,7 @@ export function ConfigHistory({
                   <TriggerIcon trigger={detailEntry.trigger} className="w-3 h-3" />
                   {triggerLabel(detailEntry.trigger)}
                 </span>
-                <span className="text-xs text-fg-2">
-                  {formatTimestamp(detailEntry.writtenAt)}
-                </span>
+                <span className="text-xs text-fg-2">{formatTimestamp(detailEntry.writtenAt)}</span>
               </div>
 
               <div>

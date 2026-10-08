@@ -49,11 +49,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       {children}
       <div className="fixed bottom-6 right-6 z-50 flex flex-col gap-2 pointer-events-none">
         {toasts.map((toast) => (
-          <div
-            key={toast.id}
-            className={`toast toast-${toast.type}`}
-            role="status"
-          >
+          <div key={toast.id} className={`toast toast-${toast.type}`} role="status">
             {ICONS[toast.type]}
             <span className="flex-1 text-sm text-fg">{toast.message}</span>
             <button

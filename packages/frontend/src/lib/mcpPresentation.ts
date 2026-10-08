@@ -1,38 +1,22 @@
 import type { McpServer } from '../api/client';
 
-export function getServerBadgeLabel(server: McpServer): string {
-  if (server.control.collectionPath === 'mcp' && !server.command && !server.url) {
-    return 'built-in';
-  }
+/** Servers the agent ships itself (opencode/Goose built-ins, Zed extensions). */
+export function isBuiltInServer(server: McpServer): boolean {
+  return !server.control.canEdit && !server.command && !server.url;
+}
 
-  switch (server.transport) {
-    case 'stdio':
-      return 'stdio';
-    case 'sse':
-      return 'sse';
-    case 'http':
-      return 'http';
-    default:
-      return 'managed';
-  }
+export function getServerBadgeLabel(server: McpServer): string {
+  if (isBuiltInServer(server)) return 'built-in';
+  return server.transport === 'unknown' ? 'managed' : server.transport;
 }
 
 export function getServerBadgeClass(server: McpServer): string {
-  if (server.control.collectionPath === 'mcp' && !server.command && !server.url) {
-    return 'badge-strong';
-  }
-  return 'badge';
+  return isBuiltInServer(server) ? 'badge-outline' : 'badge';
 }
 
 export function getServerPreviewText(server: McpServer): string {
   const cmd = server.command ?? server.url ?? '';
   if (cmd) return cmd;
-
-  if (server.control.collectionPath === 'mcp' && server.control.enableMode === 'entry-enabled') {
-    return 'Controlled by this app config';
-  }
-
-  if (server.control.canToggle) return 'Controlled by config';
-
+  if (isBuiltInServer(server)) return 'Built into the agent';
   return 'Managed by config';
 }

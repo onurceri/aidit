@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions and ideas
+    url: https://github.com/onurceri/aidit/discussions
+    about: Ask how something works or float an idea before opening an issue.
+  - name: Report a security vulnerability
+    url: https://github.com/onurceri/aidit/security/advisories/new
+    about: Please report security issues privately, not as public issues.

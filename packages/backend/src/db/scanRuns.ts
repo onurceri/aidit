@@ -1,4 +1,4 @@
-import { db } from './db.js';
+import { prepare } from './db.js';
 
 export interface ScanRunRow {
   id: number;
@@ -21,16 +21,16 @@ export interface ScanRunInput {
   triggered_by: 'startup' | 'manual' | 'file_change' | 'api';
 }
 
-const insertStmt = db.prepare(`
+const insertStmt = prepare<object>(`
   INSERT INTO scan_runs (started_at, finished_at, duration_ms, agents_found, mcp_total, skills_total, triggered_by)
   VALUES (@started_at, @finished_at, @duration_ms, @agents_found, @mcp_total, @skills_total, @triggered_by)
 `);
 
-const recentStmt = db.prepare<[number], ScanRunRow>(
+const recentStmt = prepare<[number], ScanRunRow>(
   `SELECT * FROM scan_runs ORDER BY started_at DESC LIMIT ?`,
 );
 
-const latestStmt = db.prepare<[], ScanRunRow>(
+const latestStmt = prepare<[], ScanRunRow>(
   `SELECT * FROM scan_runs ORDER BY started_at DESC LIMIT 1`,
 );
 
@@ -40,7 +40,7 @@ export function insertScanRun(input: ScanRunInput): number {
 }
 
 export function getRecentRuns(limit = 20): ScanRunRow[] {
-  return recentStmt.all(limit);
+  return recentStmt.all([limit]);
 }
 
 export function getLatestRun(): ScanRunRow | undefined {

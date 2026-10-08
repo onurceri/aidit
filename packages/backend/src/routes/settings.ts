@@ -1,5 +1,6 @@
 import { Router } from 'express';
-import { exec } from 'node:child_process';
+import { execFile } from 'node:child_process';
+import { mkdirSync } from 'node:fs';
 import { getAllSettings, setSetting } from '../db/settings.js';
 import { BACKUP_BASE } from '../writer/backupManager.js';
 
@@ -20,7 +21,7 @@ router.get('/', (_req, res) => {
 router.put('/', (req, res) => {
   const { key, value } = req.body as { key?: string; value?: unknown };
 
-  if (!key || typeof key !== 'string') {
+  if (!key || typeof key !== 'string' || !/^[a-z][a-z0-9_]{0,63}$/.test(key)) {
     res.status(400).json({
       error: 'invalid_body',
       message: 'Request body must include "key" as a string and "value"',
@@ -40,10 +41,19 @@ router.put('/', (req, res) => {
 });
 
 router.post('/open-backup-folder', (_req, res) => {
-  const cmd = process.platform === 'darwin' ? `open "${BACKUP_BASE}"` : `xdg-open "${BACKUP_BASE}"`;
+  // Fixed binary + argv array: no shell, so the path can never be interpreted as a command.
+  const opener =
+    process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'explorer' : 'xdg-open';
 
-  exec(cmd, (err) => {
-    if (err) {
+  try {
+    mkdirSync(BACKUP_BASE, { recursive: true });
+  } catch {
+    /* reported by the opener below */
+  }
+
+  execFile(opener, [BACKUP_BASE], (err) => {
+    // explorer.exe exits with code 1 even on success.
+    if (err && process.platform !== 'win32') {
       res.status(500).json({
         error: 'open_folder_failed',
         message: err.message,

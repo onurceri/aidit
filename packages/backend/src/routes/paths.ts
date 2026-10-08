@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
+import { DATA_DIR } from '../dataDir.js';
 import { loadRegistry, saveRegistry } from '../registry/pathRegistry.js';
 import type { PathEntry } from '../registry/pathRegistry.js';
 import { BUILTIN_PATHS } from '../registry/builtins.js';
@@ -16,9 +16,27 @@ import { broadcast } from '../watcher/wsServer.js';
 
 const router: ReturnType<typeof Router> = Router();
 
-const BACKUP_BASE = join(homedir(), '.config', 'aidit', 'backups', 'path-registry');
+const BACKUP_BASE = join(DATA_DIR, 'backups', 'path-registry');
 
 const REQUIRED_FIELDS = ['id', 'label', 'path', 'type', 'scope', 'source'] as const;
+
+/** Entry ids become backup directory names, so they must be plain path segments. */
+const ENTRY_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+const ENTRY_TYPES = new Set(['mcp-config', 'skills-dir', 'unknown']);
+const ENTRY_SCOPES = new Set(['global', 'project']);
+const ENTRY_SOURCES = new Set(['builtin', 'user']);
+
+function validateEntryValues(entry: Record<string, unknown>): string | null {
+  const id = entry.id as string;
+  if (!ENTRY_ID.test(id) || id.includes('..')) return 'id';
+  if (!ENTRY_TYPES.has(entry.type as string)) return 'type';
+  if (!ENTRY_SCOPES.has(entry.scope as string)) return 'scope';
+  if (!ENTRY_SOURCES.has(entry.source as string)) return 'source';
+  if (entry.agent !== undefined && entry.agent !== null && typeof entry.agent !== 'string') {
+    return 'agent';
+  }
+  return null;
+}
 
 function backupRegistry(): string {
   mkdirSync(BACKUP_BASE, { recursive: true });
@@ -60,6 +78,14 @@ router.put('/', (req, res) => {
 
   for (let i = 0; i < entries.length; i++) {
     const entry = entries[i] as Record<string, unknown>;
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      res.status(400).json({
+        error: 'invalid_entry',
+        message: `Entry at index ${i} must be an object`,
+        index: i,
+      });
+      return;
+    }
     for (const field of REQUIRED_FIELDS) {
       if (typeof entry[field] !== 'string' || !entry[field]) {
         res.status(400).json({
@@ -76,6 +102,16 @@ router.put('/', (req, res) => {
         error: 'invalid_entry',
         message: `Entry at index ${i} is missing required field "enabled"`,
         field: 'enabled',
+        index: i,
+      });
+      return;
+    }
+    const invalidField = validateEntryValues(entry);
+    if (invalidField) {
+      res.status(400).json({
+        error: 'invalid_entry',
+        message: `Entry at index ${i} has an invalid "${invalidField}"`,
+        field: invalidField,
         index: i,
       });
       return;
@@ -165,6 +201,14 @@ router.post('/import', (req, res) => {
 
   for (let i = 0; i < fileEntries.length; i++) {
     const entry = fileEntries[i] as Record<string, unknown>;
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      res.status(400).json({
+        error: 'invalid_entry',
+        message: `Entry at index ${i} must be an object`,
+        index: i,
+      });
+      return;
+    }
     for (const field of REQUIRED_FIELDS) {
       if (typeof entry[field] !== 'string' || !entry[field]) {
         res.status(400).json({
@@ -181,6 +225,16 @@ router.post('/import', (req, res) => {
         error: 'invalid_entry',
         message: `Entry at index ${i} is missing required field "enabled"`,
         field: 'enabled',
+        index: i,
+      });
+      return;
+    }
+    const invalidField = validateEntryValues(entry);
+    if (invalidField) {
+      res.status(400).json({
+        error: 'invalid_entry',
+        message: `Entry at index ${i} has an invalid "${invalidField}"`,
+        field: invalidField,
         index: i,
       });
       return;

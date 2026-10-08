@@ -1,4 +1,5 @@
-export { safeWrite, restoreBackup, SafeWriteError } from './safeWriter.js';
+export { safeWrite, applyServerChange, restoreBackup, SafeWriteError } from './safeWriter.js';
+export type { ServerOperation } from './mcpMutations.js';
 export {
   BACKUP_BASE,
   createBackup,

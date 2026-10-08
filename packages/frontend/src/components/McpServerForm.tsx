@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Plus, X, Loader } from 'lucide-react';
-import type { McpServer } from '../api/client';
+import type { McpServer, ServerInput } from '../api/client';
 
 interface FormData {
   name: string;
@@ -9,6 +9,7 @@ interface FormData {
   args: string[];
   env: { key: string; value: string }[];
   url: string;
+  headers?: Record<string, string>;
   enabled: boolean;
 }
 
@@ -23,6 +24,8 @@ interface McpServerFormProps {
   apiErrors?: FieldError[] | null;
   onSave: (data: FormData) => void;
   onCancel: () => void;
+  /** Whether the target config has an enable/disable flag. */
+  canToggle?: boolean;
 }
 
 function emptyForm(): FormData {
@@ -45,37 +48,30 @@ function serverToForm(server: McpServer): FormData {
     command: server.command ?? '',
     args: server.args ?? [],
     url: server.url ?? '',
+    headers: server.headers,
     enabled: server.enabled,
     env,
   };
 }
 
-function formToMcpServerConfig(data: FormData): Record<string, unknown> {
-  const config: Record<string, unknown> = {};
-
-  if (data.transport === 'stdio') {
-    config.command = data.command;
-    if (data.args.length > 0) config.args = data.args.filter((a) => a.trim());
-  } else {
-    config.url = data.url;
-    if (data.transport === 'sse') {
-      config.transport = 'sse';
-    }
+function formToServerInput(data: FormData): ServerInput {
+  const env: Record<string, string> = {};
+  for (const { key, value } of data.env) {
+    if (key.trim()) env[key.trim()] = value;
   }
-
-  if (data.env.length > 0) {
-    const envObj: Record<string, string> = {};
-    for (const { key, value } of data.env) {
-      if (key.trim()) envObj[key.trim()] = value;
-    }
-    if (Object.keys(envObj).length > 0) config.env = envObj;
-  }
-
-  return config;
+  const base = { name: data.name.trim(), transport: data.transport, enabled: data.enabled };
+  return data.transport === 'stdio'
+    ? {
+        ...base,
+        command: data.command.trim(),
+        args: data.args.filter((a) => a.trim()),
+        env,
+      }
+    : { ...base, url: data.url.trim(), headers: data.headers, env };
 }
 
 export type { FormData };
-export { formToMcpServerConfig, serverToForm, emptyForm };
+export { formToServerInput, serverToForm, emptyForm };
 
 export function McpServerForm({
   server,
@@ -83,6 +79,7 @@ export function McpServerForm({
   apiErrors,
   onSave,
   onCancel,
+  canToggle = true,
 }: McpServerFormProps) {
   const [data, setData] = useState<FormData>(server ? serverToForm(server) : emptyForm());
   const [touched, setTouched] = useState<Set<string>>(new Set());
@@ -217,7 +214,9 @@ export function McpServerForm({
               value={data.url}
               onChange={(e) => update('url', e.target.value)}
               onBlur={() => setTouched((prev) => new Set(prev).add('url'))}
-              placeholder={data.transport === 'http' ? 'http://localhost:3000' : 'https://example.com/sse'}
+              placeholder={
+                data.transport === 'http' ? 'http://localhost:3000' : 'https://example.com/sse'
+              }
             />
             {hasError('url') ? <p className="helper text-fg">{getError('url')}</p> : null}
           </div>
@@ -299,7 +298,7 @@ export function McpServerForm({
           </button>
         </div>
 
-        <div className="flex items-center justify-between">
+        <div className={`flex items-center justify-between ${canToggle ? '' : 'hidden'}`}>
           <label className="text-sm font-medium text-fg">Enabled</label>
           <button
             type="button"

@@ -5,99 +5,75 @@ import {
   mkdirSync,
   renameSync,
   unlinkSync,
+  statSync,
 } from 'node:fs';
-import { dirname, join, extname } from 'node:path';
+import { dirname, join, basename } from 'node:path';
 import { randomBytes } from 'node:crypto';
-import { parse as parseJsonc, printParseErrorCode } from 'jsonc-parser';
-import type { ParseError } from 'jsonc-parser';
-import { load as parseYaml } from 'js-yaml';
 import { getEntryById } from '../db/pathRegistry.js';
 import { resolvePath } from '../scanner/pathResolver.js';
-import { extractMcpServers } from '../scanner/mcpExtractor.js';
 import { insertWriteLog } from '../db/writeLog.js';
 import { createBackup, pruneBackups, readBackupContent } from './backupManager.js';
-import { parseConfigFile, readConfigMeta } from '../scanner/configParser.js';
+import { detectFormat } from '../scanner/formats.js';
+import { readConfig, preferredDialect } from '../scanner/readConfig.js';
+import { validateConfig } from '../validation/validator.js';
+import { applyServerOperation, type ServerOperation } from './mcpMutations.js';
+import { SafeWriteError } from './errors.js';
 import type { ConfigResult } from '../scanner/types.js';
 
-export class SafeWriteError extends Error {
-  constructor(
-    message: string,
-    public statusCode: number = 500,
-  ) {
-    super(message);
-    this.name = 'SafeWriteError';
-  }
+export { SafeWriteError };
+
+export type WriteTrigger = 'user_form' | 'user_json' | 'sync' | 'restore';
+
+interface WriteTarget {
+  pathEntryId: string;
+  absolutePath: string;
+  scope: 'global' | 'project';
+  agent: string | null;
 }
 
-function detectFormat(filePath: string): 'json' | 'jsonc' | 'yaml' {
-  const ext = extname(filePath).toLowerCase();
-  if (ext === '.jsonc') return 'jsonc';
-  if (ext === '.yaml' || ext === '.yml') return 'yaml';
-  return 'json';
-}
-
-function validateContent(content: string, format: 'json' | 'jsonc' | 'yaml'): object {
-  if (format === 'yaml') {
-    try {
-      const parsed = parseYaml(content);
-      if (parsed === undefined || parsed === null) {
-        throw new SafeWriteError('YAML content is empty', 400);
-      }
-      if (typeof parsed !== 'object') {
-        throw new SafeWriteError('YAML content must be an object', 400);
-      }
-      return parsed as object;
-    } catch (err) {
-      if (err instanceof SafeWriteError) throw err;
-      throw new SafeWriteError(
-        `Invalid YAML: ${err instanceof Error ? err.message : String(err)}`,
-        400,
-      );
-    }
-  }
-
-  const errors: ParseError[] = [];
-  const parsed = parseJsonc(content, errors, {
-    allowTrailingComma: true,
-    allowEmptyContent: true,
-  });
-
-  if (errors.length > 0) {
-    const messages = errors.map((e) => printParseErrorCode(e.error));
-    throw new SafeWriteError(`Invalid JSON: ${messages.join('; ')}`, 400);
-  }
-
-  if (parsed === null || parsed === undefined) {
-    throw new SafeWriteError('Content is empty or contains only comments', 400);
-  }
-
-  if (typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new SafeWriteError('JSON content must be an object', 400);
-  }
-
-  return parsed as object;
-}
-
-export function safeWrite(
-  pathEntryId: string,
-  content: string,
-  format?: 'json' | 'jsonc' | 'yaml',
-  triggeredBy: 'user_form' | 'user_json' | 'sync' | 'restore' = 'user_json',
-): ConfigResult {
+function resolveTarget(pathEntryId: string, cwd?: string): WriteTarget {
   const row = getEntryById(pathEntryId);
   if (!row) {
     throw new SafeWriteError(`Path entry "${pathEntryId}" not found`, 404);
   }
-
-  const absolutePath = resolvePath(row.path);
-  const resolvedFormat = format ?? detectFormat(absolutePath);
-
-  validateContent(content, resolvedFormat);
-
-  let contentBefore = '';
-  if (existsSync(absolutePath)) {
-    contentBefore = readFileSync(absolutePath, 'utf-8');
+  if (row.type !== 'mcp-config') {
+    throw new SafeWriteError(`Path entry "${pathEntryId}" is not an MCP config file`, 400);
   }
+  return {
+    pathEntryId,
+    absolutePath: resolvePath(row.path, cwd),
+    scope: row.scope,
+    agent: row.agent,
+  };
+}
+
+function readCurrent(absolutePath: string): string {
+  return existsSync(absolutePath) ? readFileSync(absolutePath, 'utf-8') : '';
+}
+
+/**
+ * Backup → validate → atomic write. The temp file is created next to the target so
+ * the final rename stays on one filesystem, and keeps the original file mode.
+ */
+function writeAtomically(
+  target: WriteTarget,
+  content: string,
+  trigger: WriteTrigger,
+): ConfigResult {
+  const { pathEntryId, absolutePath } = target;
+  const format = detectFormat(absolutePath);
+  const { dialect } = preferredDialect(target.agent, absolutePath);
+
+  const validation = validateConfig(content, format, dialect);
+  if (!validation.valid) {
+    const error = new SafeWriteError(
+      validation.errors.map((e) => `${e.field}: ${e.message}`).join('; '),
+      400,
+    );
+    throw Object.assign(error, { errors: validation.errors });
+  }
+
+  const contentBefore = readCurrent(absolutePath);
 
   let backupPath = '';
   if (contentBefore) {
@@ -113,25 +89,14 @@ export function safeWrite(
 
   const targetDir = dirname(absolutePath);
   mkdirSync(targetDir, { recursive: true });
-
-  const tmpName = `.aidit_tmp_${randomBytes(8).toString('hex')}`;
-  const tempPath = join(targetDir, tmpName);
-
-  try {
-    writeFileSync(tempPath, content, 'utf-8');
-  } catch (err) {
-    try {
-      unlinkSync(tempPath);
-    } catch {
-      /* ignore */
-    }
-    throw new SafeWriteError(
-      `Failed to write temp file: ${err instanceof Error ? err.message : String(err)}`,
-      500,
-    );
-  }
+  const tempPath = join(
+    targetDir,
+    `.${basename(absolutePath)}.aidit-${randomBytes(6).toString('hex')}`,
+  );
+  const mode = existsSync(absolutePath) ? statSync(absolutePath).mode & 0o777 : 0o600;
 
   try {
+    writeFileSync(tempPath, content, { encoding: 'utf-8', mode });
     renameSync(tempPath, absolutePath);
   } catch (err) {
     try {
@@ -140,7 +105,7 @@ export function safeWrite(
       /* ignore */
     }
     throw new SafeWriteError(
-      `Failed to atomically rename temp file: ${err instanceof Error ? err.message : String(err)}`,
+      `Failed to write file: ${err instanceof Error ? err.message : String(err)}`,
       500,
     );
   }
@@ -157,36 +122,43 @@ export function safeWrite(
     backup_path: backupPath,
     content_before: contentBefore,
     content_after: content,
-    triggered_by: triggeredBy,
+    triggered_by: trigger,
   });
 
-  const parseResult = parseConfigFile(absolutePath);
-  const meta = readConfigMeta(absolutePath);
+  return readConfig(target);
+}
 
-  let mcpServers: ConfigResult['mcpServers'] = [];
-  if (parseResult.parsed) {
-    try {
-      mcpServers = extractMcpServers(parseResult.parsed);
-    } catch {
-      /* empty on extraction failure */
-    }
-  }
+/** Replaces the whole file with `content` (raw editor saves, restores). */
+export function safeWrite(
+  pathEntryId: string,
+  content: string,
+  triggeredBy: WriteTrigger = 'user_json',
+  cwd?: string,
+): ConfigResult {
+  return writeAtomically(resolveTarget(pathEntryId, cwd), content, triggeredBy);
+}
 
-  return {
-    pathEntryId,
-    absolutePath,
-    scope: row.scope,
-    format: parseResult.format,
-    raw: parseResult.raw,
-    parsed: parseResult.parsed,
-    mcpServers,
-    parseError: parseResult.parseError,
-    lastModified: meta.lastModified,
-    sizeBytes: meta.sizeBytes,
-  };
+/** Applies a structured server change (add / edit / delete / toggle). */
+export function applyServerChange(
+  pathEntryId: string,
+  operation: ServerOperation,
+  triggeredBy: WriteTrigger = 'user_form',
+  cwd?: string,
+): ConfigResult {
+  const target = resolveTarget(pathEntryId, cwd);
+  const { dialect, options } = preferredDialect(target.agent, target.absolutePath);
+  const current = readCurrent(target.absolutePath);
+  const next = applyServerOperation(
+    current,
+    detectFormat(target.absolutePath),
+    dialect,
+    options,
+    operation,
+  );
+  return writeAtomically(target, next, triggeredBy);
 }
 
 export function restoreBackup(pathEntryId: string, filename: string): ConfigResult {
   const content = readBackupContent(pathEntryId, filename);
-  return safeWrite(pathEntryId, content, undefined, 'restore');
+  return safeWrite(pathEntryId, content, 'restore');
 }

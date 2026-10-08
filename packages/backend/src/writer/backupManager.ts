@@ -8,10 +8,11 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
 import { getSetting } from '../db/settings.js';
 
-export const BACKUP_BASE = join(homedir(), '.config', 'aidit', 'backups');
+import { BACKUP_BASE } from '../dataDir.js';
+
+export { BACKUP_BASE };
 
 function backupDir(pathEntryId: string): string {
   return join(BACKUP_BASE, pathEntryId);

@@ -1,3 +1,9 @@
+/**
+ * Ordered schema migrations. Index N upgrades `PRAGMA user_version` from N to N+1.
+ * Never edit a shipped migration — append a new one instead.
+ */
+export const MIGRATIONS: string[] = [
+  `
 CREATE TABLE IF NOT EXISTS settings (
   key        TEXT PRIMARY KEY,
   value      TEXT NOT NULL,
@@ -50,3 +56,9 @@ CREATE TABLE IF NOT EXISTS path_registry (
   enabled    INTEGER NOT NULL DEFAULT 1,
   sort_order INTEGER NOT NULL DEFAULT 0
 );
+`,
+  `
+CREATE INDEX IF NOT EXISTS idx_write_log_path_entry ON write_log (path_entry_id, written_at);
+CREATE INDEX IF NOT EXISTS idx_scan_runs_started ON scan_runs (started_at);
+`,
+];

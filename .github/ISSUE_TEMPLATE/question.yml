@@ -1,0 +1,21 @@
+name: Question
+description: Ask a question about how aidit works (consider Discussions first)
+title: '[question] '
+labels: [question]
+body:
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: What are you trying to do, and what have you tried?
+  - type: input
+    id: version
+    attributes:
+      label: aidit version and OS
+      placeholder: 0.2.0 on macOS 26

@@ -1,8 +1,19 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { Plus, Loader, AlertTriangle, TestTube2, Info, X, Download, Upload, ArrowLeft } from 'lucide-react';
+import {
+  Plus,
+  Loader,
+  AlertTriangle,
+  TestTube2,
+  Info,
+  X,
+  Download,
+  Upload,
+  ArrowLeft,
+} from 'lucide-react';
 import { PathTable, type PathStatus } from '../components/PathTable';
 import { ConfirmModal } from '../components/ConfirmModal';
+import { Page } from '../components/Layout';
 import { useToast } from '../context/ToastContext';
 import {
   fetchPaths,
@@ -252,279 +263,281 @@ export function PathRegistry() {
 
   if (loading) {
     return (
-      <div className="p-6 flex items-center justify-center min-h-[50vh]">
-        <Loader className="w-5 h-5 text-fg-2 animate-spin" />
-      </div>
+      <Page title="Path registry">
+        <div className="flex items-center justify-center min-h-[50vh]">
+          <Loader className="w-5 h-5 text-fg-2 animate-spin" />
+        </div>
+      </Page>
     );
   }
 
   return (
-    <div className="w-full max-w-6xl mx-auto flex flex-col gap-6">
-      <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-border pb-4">
-        <div>
+    <Page
+      title="Path registry"
+      description={`${entries.length} entries · ${builtinCount} built-in · ${enabledCount} enabled`}
+      actions={
+        <>
+          <Link to="/settings" className="btn-ghost btn-sm">
+            <ArrowLeft className="w-3.5 h-3.5" />
+            Settings
+          </Link>
           <div className="flex items-center gap-2">
-            <Link to="/settings" className="btn-ghost btn-sm">
-              <ArrowLeft className="w-3.5 h-3.5" />
-              Settings
-            </Link>
-          </div>
-          <h1 className="heading-page mt-2">Path registry</h1>
-          <p className="mt-1 text-sm text-fg-2">
-            {entries.length} entries · {builtinCount} built-in · {enabledCount} enabled
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <button onClick={handleExport} className="btn-secondary">
-            <Download className="w-4 h-4" />
-            Export
-          </button>
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            disabled={importing}
-            className="btn-secondary"
-          >
-            <Upload className="w-4 h-4" />
-            {importing ? 'Importing' : 'Import'}
-          </button>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".json"
-            onChange={handleImport}
-            className="hidden"
-          />
-          <button
-            onClick={() => setShowResetAllModal(true)}
-            disabled={saving}
-            className="btn-secondary"
-          >
-            Reset built-ins
-          </button>
-          <button
-            onClick={() => {
-              setShowAddForm(!showAddForm);
-              if (showAddForm) {
-                setAddForm(EMPTY_FORM);
-                setTestResult(null);
-              }
-            }}
-            className="btn-primary"
-          >
-            <Plus className="w-4 h-4" />
-            Add entry
-          </button>
-        </div>
-      </header>
-
-      {error ? (
-        <div className="card p-4 flex items-start gap-3 border-border-strong">
-          <AlertTriangle className="w-4 h-4 text-fg flex-shrink-0 mt-0.5" />
-          <p className="text-sm text-fg">{error}</p>
-        </div>
-      ) : null}
-
-      {importResult ? (
-        <div className="card p-4 border-border-strong">
-          <p className="text-sm text-fg">
-            Import complete: {importResult.added} added, {importResult.skipped} skipped
-          </p>
-          {importResult.errors.length > 0 ? (
-            <ul className="mt-2 space-y-1 text-xs text-fg-2 list-disc list-inside">
-              {importResult.errors.map((err, i) => (
-                <li key={i}>{err}</li>
-              ))}
-            </ul>
-          ) : null}
-        </div>
-      ) : null}
-
-      <PathTable
-        entries={entries}
-        pathStatuses={pathStatuses}
-        onUpdate={saveEntries}
-        onDelete={(id) => setDeleteTarget(id)}
-        onResetEntry={(id) => setResetTarget(id)}
-        saving={saving}
-      />
-
-      {showAddForm ? (
-        <div className="card p-5">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-sm font-semibold text-fg">Add new entry</h2>
+            <button onClick={handleExport} className="btn-secondary btn-sm">
+              <Download className="w-3.5 h-3.5" />
+              Export
+            </button>
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={importing}
+              className="btn-secondary btn-sm"
+            >
+              <Upload className="w-3.5 h-3.5" />
+              {importing ? 'Importing' : 'Import'}
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".json"
+              onChange={handleImport}
+              className="hidden"
+            />
+            <button
+              onClick={() => setShowResetAllModal(true)}
+              disabled={saving}
+              className="btn-secondary btn-sm"
+            >
+              Reset built-ins
+            </button>
             <button
               onClick={() => {
-                setShowAddForm(false);
-                setAddForm(EMPTY_FORM);
-                setTestResult(null);
+                setShowAddForm(!showAddForm);
+                if (showAddForm) {
+                  setAddForm(EMPTY_FORM);
+                  setTestResult(null);
+                }
               }}
-              className="btn-icon"
-              aria-label="Close add form"
+              className="btn-primary btn-sm"
             >
-              <X className="w-4 h-4" />
+              <Plus className="w-3.5 h-3.5" />
+              Add entry
             </button>
           </div>
-
-          <div className="grid grid-cols-2 gap-4 mb-4">
-            <div>
-              <label className="label">Label</label>
-              <input
-                value={addForm.label}
-                onChange={(e) => setAddForm((f) => ({ ...f, label: e.target.value }))}
-                placeholder="My custom config"
-                className="input"
-              />
-            </div>
-            <div>
-              <label className="label">Agent</label>
-              <input
-                value={addForm.agent}
-                onChange={(e) => setAddForm((f) => ({ ...f, agent: e.target.value }))}
-                placeholder="claude-code"
-                className="input"
-              />
-            </div>
+        </>
+      }
+    >
+      <div className="flex flex-col gap-6">
+        {error ? (
+          <div className="card p-4 flex items-start gap-3 border-border-strong">
+            <AlertTriangle className="w-4 h-4 text-fg flex-shrink-0 mt-0.5" />
+            <p className="text-sm text-fg">{error}</p>
           </div>
+        ) : null}
 
-          <div className="mb-4">
-            <label className="label">Path</label>
-            <div className="flex gap-2">
-              <input
-                value={addForm.path}
-                onChange={(e) => {
-                  setAddForm((f) => ({ ...f, path: e.target.value }));
-                  setTestResult(null);
-                }}
-                placeholder="~/.config/custom/mcp.json"
-                className="input flex-1 font-mono"
-              />
-              <button
-                onClick={handleTestPath}
-                disabled={testing || !addForm.path.trim()}
-                className="btn-secondary"
-              >
-                <TestTube2 className="w-4 h-4" />
-                {testing ? 'Testing' : 'Test path'}
-              </button>
-            </div>
-            {testResult ? (
-              <div className="mt-2 flex items-center gap-1.5 text-xs text-fg-2">
-                <Info className="w-3.5 h-3.5" />
-                {testResult.found
-                  ? `Found: ${testResult.resolved}${
-                      testResult.matches.length > 1 ? ` (${testResult.matches.length} matches)` : ''
-                    }`
-                  : 'No files found at this path. You can still save.'}
-              </div>
+        {importResult ? (
+          <div className="card p-4 border-border-strong">
+            <p className="text-sm text-fg">
+              Import complete: {importResult.added} added, {importResult.skipped} skipped
+            </p>
+            {importResult.errors.length > 0 ? (
+              <ul className="mt-2 space-y-1 text-xs text-fg-2 list-disc list-inside">
+                {importResult.errors.map((err, i) => (
+                  <li key={i}>{err}</li>
+                ))}
+              </ul>
             ) : null}
           </div>
+        ) : null}
 
-          <div className="grid grid-cols-3 gap-4 mb-4">
-            <div>
-              <label className="label">Type</label>
-              <div className="flex gap-1 p-0.5 rounded-md border border-border bg-surface-2 w-fit">
-                {(['mcp-config', 'skills-dir', 'unknown'] as const).map((t) => (
-                  <button
-                    key={t}
-                    onClick={() => setAddForm((f) => ({ ...f, type: t }))}
-                    className={`h-7 px-2.5 rounded text-xs font-medium transition-colors ${
-                      addForm.type === t ? 'bg-surface text-fg' : 'text-fg-2 hover:text-fg'
-                    }`}
-                  >
-                    {t}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div>
-              <label className="label">Scope</label>
-              <div className="flex gap-1 p-0.5 rounded-md border border-border bg-surface-2 w-fit">
-                {(['global', 'project'] as const).map((s) => (
-                  <button
-                    key={s}
-                    onClick={() => setAddForm((f) => ({ ...f, scope: s }))}
-                    className={`h-7 px-2.5 rounded text-xs font-medium transition-colors ${
-                      addForm.scope === s ? 'bg-surface text-fg' : 'text-fg-2 hover:text-fg'
-                    }`}
-                  >
-                    {s}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div>
-              <label className="label">Enabled</label>
+        <PathTable
+          entries={entries}
+          pathStatuses={pathStatuses}
+          onUpdate={saveEntries}
+          onDelete={(id) => setDeleteTarget(id)}
+          onResetEntry={(id) => setResetTarget(id)}
+          saving={saving}
+        />
+
+        {showAddForm ? (
+          <div className="card p-5">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-sm font-semibold text-fg">Add new entry</h2>
               <button
-                onClick={() => setAddForm((f) => ({ ...f, enabled: !f.enabled }))}
-                role="switch"
-                aria-checked={addForm.enabled}
-                className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
-                  addForm.enabled ? 'bg-fg' : 'bg-fg-3'
-                }`}
+                onClick={() => {
+                  setShowAddForm(false);
+                  setAddForm(EMPTY_FORM);
+                  setTestResult(null);
+                }}
+                className="btn-icon"
+                aria-label="Close add form"
               >
-                <span
-                  className={`inline-block h-4 w-4 transform rounded-full bg-surface transition-transform ${
-                    addForm.enabled ? 'translate-x-4' : 'translate-x-0.5'
-                  }`}
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4 mb-4">
+              <div>
+                <label className="label">Label</label>
+                <input
+                  value={addForm.label}
+                  onChange={(e) => setAddForm((f) => ({ ...f, label: e.target.value }))}
+                  placeholder="My custom config"
+                  className="input"
                 />
+              </div>
+              <div>
+                <label className="label">Agent</label>
+                <input
+                  value={addForm.agent}
+                  onChange={(e) => setAddForm((f) => ({ ...f, agent: e.target.value }))}
+                  placeholder="claude-code"
+                  className="input"
+                />
+              </div>
+            </div>
+
+            <div className="mb-4">
+              <label className="label">Path</label>
+              <div className="flex gap-2">
+                <input
+                  value={addForm.path}
+                  onChange={(e) => {
+                    setAddForm((f) => ({ ...f, path: e.target.value }));
+                    setTestResult(null);
+                  }}
+                  placeholder="~/.config/custom/mcp.json"
+                  className="input flex-1 font-mono"
+                />
+                <button
+                  onClick={handleTestPath}
+                  disabled={testing || !addForm.path.trim()}
+                  className="btn-secondary"
+                >
+                  <TestTube2 className="w-4 h-4" />
+                  {testing ? 'Testing' : 'Test path'}
+                </button>
+              </div>
+              {testResult ? (
+                <div className="mt-2 flex items-center gap-1.5 text-xs text-fg-2">
+                  <Info className="w-3.5 h-3.5" />
+                  {testResult.found
+                    ? `Found: ${testResult.resolved}${
+                        testResult.matches.length > 1
+                          ? ` (${testResult.matches.length} matches)`
+                          : ''
+                      }`
+                    : 'No files found at this path. You can still save.'}
+                </div>
+              ) : null}
+            </div>
+
+            <div className="grid grid-cols-3 gap-4 mb-4">
+              <div>
+                <label className="label">Type</label>
+                <div className="flex gap-1 p-0.5 rounded-md border border-border bg-surface-2 w-fit">
+                  {(['mcp-config', 'skills-dir', 'unknown'] as const).map((t) => (
+                    <button
+                      key={t}
+                      onClick={() => setAddForm((f) => ({ ...f, type: t }))}
+                      className={`h-7 px-2.5 rounded text-xs font-medium transition-colors ${
+                        addForm.type === t ? 'bg-surface text-fg' : 'text-fg-2 hover:text-fg'
+                      }`}
+                    >
+                      {t}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <label className="label">Scope</label>
+                <div className="flex gap-1 p-0.5 rounded-md border border-border bg-surface-2 w-fit">
+                  {(['global', 'project'] as const).map((s) => (
+                    <button
+                      key={s}
+                      onClick={() => setAddForm((f) => ({ ...f, scope: s }))}
+                      className={`h-7 px-2.5 rounded text-xs font-medium transition-colors ${
+                        addForm.scope === s ? 'bg-surface text-fg' : 'text-fg-2 hover:text-fg'
+                      }`}
+                    >
+                      {s}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <label className="label">Enabled</label>
+                <button
+                  onClick={() => setAddForm((f) => ({ ...f, enabled: !f.enabled }))}
+                  role="switch"
+                  aria-checked={addForm.enabled}
+                  className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+                    addForm.enabled ? 'bg-fg' : 'bg-fg-3'
+                  }`}
+                >
+                  <span
+                    className={`inline-block h-4 w-4 transform rounded-full bg-surface transition-transform ${
+                      addForm.enabled ? 'translate-x-4' : 'translate-x-0.5'
+                    }`}
+                  />
+                </button>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={handleAddEntry}
+                disabled={saving || !addForm.label.trim() || !addForm.path.trim()}
+                className="btn-primary"
+              >
+                <Plus className="w-4 h-4" />
+                {saving ? 'Adding' : 'Add entry'}
               </button>
             </div>
           </div>
+        ) : null}
 
-          <div className="flex justify-end gap-2">
-            <button
-              onClick={handleAddEntry}
-              disabled={saving || !addForm.label.trim() || !addForm.path.trim()}
-              className="btn-primary"
-            >
-              <Plus className="w-4 h-4" />
-              {saving ? 'Adding' : 'Add entry'}
-            </button>
-          </div>
-        </div>
-      ) : null}
+        <ConfirmModal
+          open={deleteTarget !== null}
+          title="Delete path entry"
+          description="Are you sure you want to delete this entry? This action cannot be undone."
+          confirmLabel="Delete"
+          variant="danger"
+          onConfirm={() => {
+            if (deleteTarget) {
+              handleDelete(deleteTarget);
+              setDeleteTarget(null);
+            }
+          }}
+          onCancel={() => setDeleteTarget(null)}
+        />
 
-      <ConfirmModal
-        open={deleteTarget !== null}
-        title="Delete path entry"
-        description="Are you sure you want to delete this entry? This action cannot be undone."
-        confirmLabel="Delete"
-        variant="danger"
-        onConfirm={() => {
-          if (deleteTarget) {
-            handleDelete(deleteTarget);
-            setDeleteTarget(null);
-          }
-        }}
-        onCancel={() => setDeleteTarget(null)}
-      />
+        <ConfirmModal
+          open={resetTarget !== null}
+          title="Reset to default"
+          description="Reset this entry to its original shipped values? Any custom edits will be lost."
+          confirmLabel="Reset"
+          variant="default"
+          onConfirm={() => {
+            if (resetTarget) {
+              handleResetEntry(resetTarget);
+              setResetTarget(null);
+            }
+          }}
+          onCancel={() => setResetTarget(null)}
+        />
 
-      <ConfirmModal
-        open={resetTarget !== null}
-        title="Reset to default"
-        description="Reset this entry to its original shipped values? Any custom edits will be lost."
-        confirmLabel="Reset"
-        variant="default"
-        onConfirm={() => {
-          if (resetTarget) {
-            handleResetEntry(resetTarget);
-            setResetTarget(null);
-          }
-        }}
-        onCancel={() => setResetTarget(null)}
-      />
-
-      <ConfirmModal
-        open={showResetAllModal}
-        title="Reset all built-ins"
-        description={`This will reset all ${builtinCount} built-in entries to their default values. User-added entries will not be affected.`}
-        confirmLabel="Reset all"
-        variant="default"
-        onConfirm={() => {
-          handleResetAllBuiltins();
-          setShowResetAllModal(false);
-        }}
-        onCancel={() => setShowResetAllModal(false)}
-      />
-    </div>
+        <ConfirmModal
+          open={showResetAllModal}
+          title="Reset all built-ins"
+          description={`This will reset all ${builtinCount} built-in entries to their default values. User-added entries will not be affected.`}
+          confirmLabel="Reset all"
+          variant="default"
+          onConfirm={() => {
+            handleResetAllBuiltins();
+            setShowResetAllModal(false);
+          }}
+          onCancel={() => setShowResetAllModal(false)}
+        />
+      </div>
+    </Page>
   );
 }

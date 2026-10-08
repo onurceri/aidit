@@ -1,69 +1,43 @@
-import { Router } from 'express';
+import { Router, type Response } from 'express';
 import { existsSync } from 'node:fs';
 import { getEntryById } from '../db/pathRegistry.js';
 import { resolvePath } from '../scanner/pathResolver.js';
-import { parseConfigFile, readConfigMeta } from '../scanner/configParser.js';
-import { extractMcpServers } from '../scanner/mcpExtractor.js';
-import { safeWrite, SafeWriteError } from '../writer/safeWriter.js';
-import { validateConfig } from '../validation/validator.js';
+import { readConfig } from '../scanner/readConfig.js';
+import { safeWrite, applyServerChange, SafeWriteError } from '../writer/safeWriter.js';
+import type { ServerOperation } from '../writer/mcpMutations.js';
+import type { NormalizedServer } from '../scanner/dialects.js';
 import { getHistory, getById as getWriteLogById } from '../db/writeLog.js';
 import { getByAbsolutePath as getDiscoveredFile } from '../db/discoveredFiles.js';
-import type { ConfigResult } from '../scanner/types.js';
 
 const router: ReturnType<typeof Router> = Router();
 
-function buildConfigResult(
-  row: ReturnType<typeof getEntryById>,
-  pathEntryId: string,
-): ConfigResult | null {
-  if (!row) return null;
+function queryCwd(value: unknown): string | undefined {
+  return typeof value === 'string' && value ? value : undefined;
+}
 
-  const absolutePath = resolvePath(row.path);
-
-  if (!existsSync(absolutePath)) return null;
-
-  const parseResult = parseConfigFile(absolutePath);
-  const meta = readConfigMeta(absolutePath);
-
-  let mcpServers: ConfigResult['mcpServers'] = [];
-  if (parseResult.parsed) {
-    try {
-      mcpServers = extractMcpServers(parseResult.parsed);
-    } catch {
-      // Return empty mcpServers on extraction failure
-    }
+function sendWriteError(res: Response, err: unknown, code = 'write_failed'): void {
+  if (err instanceof SafeWriteError) {
+    const errors = (err as SafeWriteError & { errors?: unknown }).errors;
+    res.status(err.statusCode).json({ error: code, message: err.message, errors });
+    return;
   }
-
-  const df = getDiscoveredFile(absolutePath);
-
-  return {
-    pathEntryId,
-    absolutePath,
-    scope: row.scope,
-    format: parseResult.format,
-    raw: parseResult.raw,
-    parsed: parseResult.parsed,
-    mcpServers,
-    parseError: parseResult.parseError,
-    lastModified: meta.lastModified,
-    sizeBytes: meta.sizeBytes,
-    firstSeenAt: df?.first_seen_at,
-  };
+  res.status(500).json({
+    error: code,
+    message: err instanceof Error ? err.message : 'Unknown write error',
+  });
 }
 
 router.get('/:pathEntryId', (req, res) => {
   const { pathEntryId } = req.params;
-  const cwd = typeof req.query.cwd === 'string' ? req.query.cwd : undefined;
+  const cwd = queryCwd(req.query.cwd);
 
   const row = getEntryById(pathEntryId);
-
   if (!row) {
     res.status(404).json({ error: 'not_found', message: `Path entry "${pathEntryId}" not found` });
     return;
   }
 
   const absolutePath = resolvePath(row.path, cwd);
-
   if (!existsSync(absolutePath)) {
     res.status(404).json({
       error: 'file_not_found',
@@ -74,23 +48,19 @@ router.get('/:pathEntryId', (req, res) => {
     return;
   }
 
-  const result = buildConfigResult(row, pathEntryId);
-  if (!result) {
-    res.status(500).json({ error: 'read_failed', message: 'Failed to read config file' });
-    return;
-  }
-
-  res.status(200).json(result);
+  const result = readConfig({ pathEntryId, absolutePath, scope: row.scope, agent: row.agent });
+  res.status(200).json({
+    ...result,
+    firstSeenAt: getDiscoveredFile(absolutePath)?.first_seen_at,
+  });
 });
 
+/** Replace the whole file (raw editor). */
 router.patch('/:pathEntryId', (req, res) => {
   const { pathEntryId } = req.params;
-  const { content, format } = req.body as {
-    content?: string;
-    format?: string;
-  };
+  const { content } = req.body as { content?: unknown };
 
-  if (!content || typeof content !== 'string') {
+  if (typeof content !== 'string') {
     res.status(400).json({
       error: 'invalid_body',
       message: 'Request body must include "content" as a string',
@@ -98,33 +68,83 @@ router.patch('/:pathEntryId', (req, res) => {
     return;
   }
 
-  const resolvedFormat = format === 'yaml' ? 'yaml' : 'json';
+  try {
+    res.status(200).json(safeWrite(pathEntryId, content, 'user_json', queryCwd(req.query.cwd)));
+  } catch (err) {
+    sendWriteError(res, err);
+  }
+});
 
-  const validation = validateConfig(content, resolvedFormat);
-  if (!validation.valid) {
-    res.status(400).json({
-      error: 'validation_failed',
-      message: 'Config content failed validation',
-      errors: validation.errors,
-    });
+function parseServer(value: unknown): NormalizedServer | null {
+  if (!value || typeof value !== 'object') return null;
+  const v = value as Record<string, unknown>;
+  const transport = v.transport;
+  if (typeof v.name !== 'string' || !['stdio', 'sse', 'http'].includes(String(transport))) {
+    return null;
+  }
+  const strings = (x: unknown): string[] | undefined =>
+    Array.isArray(x) ? x.filter((s): s is string => typeof s === 'string') : undefined;
+  const record = (x: unknown): Record<string, string> | undefined => {
+    if (!x || typeof x !== 'object' || Array.isArray(x)) return undefined;
+    return Object.fromEntries(
+      Object.entries(x as Record<string, unknown>).filter(
+        (e): e is [string, string] => typeof e[1] === 'string',
+      ),
+    );
+  };
+  return {
+    name: v.name,
+    transport: transport as NormalizedServer['transport'],
+    command: typeof v.command === 'string' ? v.command : undefined,
+    args: strings(v.args),
+    env: record(v.env),
+    url: typeof v.url === 'string' ? v.url : undefined,
+    headers: record(v.headers),
+    enabled: v.enabled !== false,
+  };
+}
+
+/**
+ * Structured server edits. Body:
+ *   { op: 'upsert', server, originalName? } | { op: 'delete', name } | { op: 'toggle', name, enabled }
+ * The backend translates the change into the agent's own config dialect and format.
+ */
+router.post('/:pathEntryId/servers', (req, res) => {
+  const { pathEntryId } = req.params;
+  const body = req.body as Record<string, unknown>;
+  let operation: ServerOperation | null = null;
+
+  if (body.op === 'upsert') {
+    const server = parseServer(body.server);
+    if (server) {
+      operation = {
+        op: 'upsert',
+        server,
+        originalName: typeof body.originalName === 'string' ? body.originalName : undefined,
+      };
+    }
+  } else if (body.op === 'delete' && typeof body.name === 'string') {
+    operation = { op: 'delete', name: body.name };
+  } else if (
+    body.op === 'toggle' &&
+    typeof body.name === 'string' &&
+    typeof body.enabled === 'boolean'
+  ) {
+    operation = { op: 'toggle', name: body.name, enabled: body.enabled };
+  }
+
+  if (!operation) {
+    res.status(400).json({ error: 'invalid_body', message: 'Invalid server operation' });
     return;
   }
 
+  const trigger = body.trigger === 'sync' ? 'sync' : 'user_form';
   try {
-    const result = safeWrite(pathEntryId, content, resolvedFormat, 'user_form');
-    res.status(200).json(result);
+    res
+      .status(200)
+      .json(applyServerChange(pathEntryId, operation, trigger, queryCwd(req.query.cwd)));
   } catch (err) {
-    if (err instanceof SafeWriteError) {
-      res.status(err.statusCode).json({
-        error: 'write_failed',
-        message: err.message,
-      });
-      return;
-    }
-    res.status(500).json({
-      error: 'write_failed',
-      message: err instanceof Error ? err.message : 'Unknown write error',
-    });
+    sendWriteError(res, err);
   }
 });
 
@@ -191,28 +211,9 @@ router.post('/:pathEntryId/history/:writeLogId/restore', (req, res) => {
   }
 
   try {
-    const absolutePath = resolvePath(row.path);
-    const format: 'json' | 'jsonc' | 'yaml' | undefined =
-      absolutePath.endsWith('.yaml') || absolutePath.endsWith('.yml')
-        ? 'yaml'
-        : absolutePath.endsWith('.jsonc')
-          ? 'jsonc'
-          : undefined;
-
-    const result = safeWrite(pathEntryId, entry.content_after, format, 'restore');
-    res.status(200).json(result);
+    res.status(200).json(safeWrite(pathEntryId, entry.content_after, 'restore'));
   } catch (err) {
-    if (err instanceof SafeWriteError) {
-      res.status(err.statusCode).json({
-        error: 'restore_failed',
-        message: err.message,
-      });
-      return;
-    }
-    res.status(500).json({
-      error: 'restore_failed',
-      message: err instanceof Error ? err.message : 'Unknown restore error',
-    });
+    sendWriteError(res, err, 'restore_failed');
   }
 });
 

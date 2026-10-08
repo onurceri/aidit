@@ -6,7 +6,7 @@ type SaveStatus = 'idle' | 'saving' | 'saved' | 'error';
 
 interface JsonEditorProps {
   content: string;
-  language?: 'json' | 'yaml';
+  language?: 'json' | 'yaml' | 'toml' | 'ini';
   readOnly?: boolean;
   onSave?: (content: string) => Promise<void>;
 }

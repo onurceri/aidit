@@ -1,27 +1,16 @@
 import { readFileSync, existsSync, statSync } from 'node:fs';
-import { extname } from 'node:path';
-import { parse as parseJsonc, printParseErrorCode } from 'jsonc-parser';
-import type { ParseError } from 'jsonc-parser';
-import { load as parseYaml } from 'js-yaml';
+import { detectFormat, parseContent } from './formats.js';
+import type { ConfigFormat } from './types.js';
 
 export interface ParseResult {
   raw: string;
   parsed: object | null;
   parseError: string | null;
-  format: 'json' | 'jsonc' | 'yaml';
+  format: ConfigFormat;
 }
 
 export function parseConfigFile(absolutePath: string): ParseResult {
-  const ext = extname(absolutePath).toLowerCase();
-
-  let format: ParseResult['format'];
-  if (ext === '.jsonc') {
-    format = 'jsonc';
-  } else if (ext === '.yaml' || ext === '.yml') {
-    format = 'yaml';
-  } else {
-    format = 'json';
-  }
+  const format = detectFormat(absolutePath);
 
   let raw: string;
   try {
@@ -35,32 +24,8 @@ export function parseConfigFile(absolutePath: string): ParseResult {
     };
   }
 
-  let parsed: object | null = null;
-  let parseError: string | null = null;
-
-  if (format === 'yaml') {
-    try {
-      parsed = parseYaml(raw) as object;
-    } catch (err) {
-      parseError = err instanceof Error ? err.message : String(err);
-    }
-  } else {
-    const errors: ParseError[] = [];
-    parsed = parseJsonc(raw, errors, {
-      allowTrailingComma: true,
-      allowEmptyContent: true,
-    }) as object | null;
-
-    if (errors.length > 0) {
-      parseError = errors.map((e) => printParseErrorCode(e.error)).join('; ');
-    }
-
-    if (parsed === null && !parseError) {
-      parseError = 'File is empty or contains only comments';
-    }
-  }
-
-  return { raw, parsed, parseError, format };
+  const { parsed, error } = parseContent(raw, format);
+  return { raw, parsed, parseError: error, format };
 }
 
 export function readConfigMeta(absolutePath: string): {

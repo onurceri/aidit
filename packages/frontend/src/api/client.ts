@@ -1,6 +1,7 @@
 export interface ScanResult {
   scannedAt: string;
   workingDirectory: string;
+  homeDir: string;
   os: 'macos' | 'linux' | 'windows-wsl';
   agents: AgentResult[];
   projectConfigs: ConfigResult[];
@@ -10,6 +11,7 @@ export interface ScanResult {
 export interface AgentResult {
   id: string;
   label: string;
+  homepage?: string;
   found: boolean;
   configs: ConfigResult[];
   skillsDirs: SkillsDirResult[];
@@ -19,15 +21,22 @@ export interface ConfigResult {
   pathEntryId: string;
   absolutePath: string;
   scope: 'global' | 'project';
-  format: 'json' | 'jsonc' | 'yaml';
+  format: ConfigFormat;
   raw: string;
   parsed: object | null;
+  /** MCP layout of this file (e.g. 'mcp-servers', 'codex', 'opencode'), null if none. */
+  dialect: string | null;
+  canAddServers: boolean;
+  /** Whether servers in this file can be enabled/disabled without deleting them. */
+  canToggleServers: boolean;
   mcpServers: McpServer[];
   parseError: string | null;
   lastModified: string;
   sizeBytes: number;
   firstSeenAt?: string;
 }
+
+export type ConfigFormat = 'json' | 'jsonc' | 'yaml' | 'toml';
 
 export interface McpServer {
   name: string;
@@ -36,14 +45,15 @@ export interface McpServer {
   args?: string[];
   env?: Record<string, string>;
   url?: string;
+  headers?: Record<string, string>;
   enabled: boolean;
   control: McpServerControl;
   raw: object;
 }
 
 export interface McpServerControl {
+  dialect: string;
   collectionPath: string;
-  enableMode: 'disabled-array-or-entry-disabled' | 'entry-enabled' | 'none';
   canToggle: boolean;
   canEdit: boolean;
   canDelete: boolean;
@@ -52,10 +62,14 @@ export interface McpServerControl {
 export interface SkillsDirResult {
   absolutePath: string;
   scope: 'global' | 'project';
+  agentId?: string | null;
+  agentLabel?: string;
   skills: SkillFile[];
 }
 
 export interface SkillFile {
+  name: string;
+  description: string;
   filename: string;
   absolutePath: string;
   sizeBytes: number;
@@ -119,11 +133,49 @@ export interface WsEvent {
   pathEntryId?: string;
 }
 
+// ── Auth token (`aidit start --token`) ──────────────────────────────
+// The CLI opens the dashboard at /#token=<token>. Read it once, keep it for the
+// tab's lifetime in sessionStorage, and strip it from the address bar.
+const TOKEN_KEY = 'aidit.token';
+
+function readToken(): string | null {
+  try {
+    const match = /(?:^|&)token=([^&]+)/.exec(window.location.hash.slice(1));
+    if (match) {
+      const token = decodeURIComponent(match[1]);
+      sessionStorage.setItem(TOKEN_KEY, token);
+      history.replaceState(null, '', window.location.pathname + window.location.search);
+      return token;
+    }
+    return sessionStorage.getItem(TOKEN_KEY);
+  } catch {
+    return null;
+  }
+}
+
+const authToken = readToken();
+
+export function getAuthToken(): string | null {
+  return authToken;
+}
+
+function apiFetch(url: string, options?: RequestInit): Promise<Response> {
+  if (!authToken) return fetch(url, options);
+  const headers = new Headers(options?.headers);
+  headers.set('Authorization', `Bearer ${authToken}`);
+  return fetch(url, { ...options, headers });
+}
+
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(url, options);
+  const res = await apiFetch(url, options);
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new ApiError(res.status, body.error ?? 'unknown', body.message ?? res.statusText);
+    throw new ApiError(
+      res.status,
+      body.error ?? 'unknown',
+      body.message ?? res.statusText,
+      Array.isArray(body.errors) ? body.errors : undefined,
+    );
   }
   return res.json();
 }
@@ -131,12 +183,19 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
 export class ApiError extends Error {
   status: number;
   code: string;
+  errors?: { field: string; message: string }[];
 
-  constructor(status: number, code: string, message: string) {
+  constructor(
+    status: number,
+    code: string,
+    message: string,
+    errors?: { field: string; message: string }[],
+  ) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
     this.code = code;
+    this.errors = errors;
   }
 }
 
@@ -160,16 +219,53 @@ export function fetchPaths(): Promise<PathRegistry> {
   return request<PathRegistry>('/api/paths');
 }
 
-export function patchConfig(
-  id: string,
-  content: string,
-  format: 'json' | 'jsonc' | 'yaml',
-): Promise<ConfigResult> {
+/** Replaces a config file's whole content (raw editor). */
+export function patchConfig(id: string, content: string): Promise<ConfigResult> {
   return request<ConfigResult>(`/api/config/${id}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content, format }),
+    body: JSON.stringify({ content }),
   });
+}
+
+/** A server as edited in the UI; the backend writes it in the agent's own format. */
+export interface ServerInput {
+  name: string;
+  transport: 'stdio' | 'sse' | 'http';
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  url?: string;
+  headers?: Record<string, string>;
+  enabled: boolean;
+}
+
+export type ServerOperation =
+  | { op: 'upsert'; server: ServerInput; originalName?: string; trigger?: 'sync' }
+  | { op: 'delete'; name: string }
+  | { op: 'toggle'; name: string; enabled: boolean };
+
+export function changeServer(id: string, operation: ServerOperation): Promise<ConfigResult> {
+  return request<ConfigResult>(`/api/config/${id}/servers`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(operation),
+  });
+}
+
+/** Converts a scanned server into an input for another config, if it is portable. */
+export function toServerInput(server: McpServer): ServerInput | null {
+  if (server.transport === 'unknown' || !server.control.canEdit) return null;
+  return {
+    name: server.name,
+    transport: server.transport,
+    command: server.command,
+    args: server.args,
+    env: server.env,
+    url: server.url,
+    headers: server.headers,
+    enabled: server.enabled,
+  };
 }
 
 export function fetchBackups(id: string): Promise<{ pathEntryId: string; backups: BackupEntry[] }> {
@@ -230,7 +326,7 @@ export interface ImportResult {
 }
 
 export async function exportPaths(): Promise<void> {
-  const res = await fetch('/api/paths/export');
+  const res = await apiFetch('/api/paths/export');
   if (!res.ok) throw new Error('Export failed');
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);

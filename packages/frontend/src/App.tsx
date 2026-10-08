@@ -1,5 +1,15 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { Moon, Sun, Search } from 'lucide-react';
+import {
+  Moon,
+  Sun,
+  Search,
+  LayoutGrid,
+  Plug,
+  BookOpen,
+  GitCompareArrows,
+  Settings as SettingsIcon,
+  type LucideIcon,
+} from 'lucide-react';
 import { BrowserRouter, Routes, Route, NavLink, Navigate } from 'react-router-dom';
 import { WsProvider } from './context/WsContext';
 import { ScanProvider } from './context/ScanContext';
@@ -7,7 +17,7 @@ import { ToastProvider } from './context/ToastContext';
 import { useScan } from './hooks/useScan';
 import { useWatcher } from './hooks/useWatcher';
 import { LiveIndicator } from './components/LiveIndicator';
-import { CommandPalette } from './components/CommandPalette';
+import { CommandPalette, OPEN_PALETTE_EVENT } from './components/CommandPalette';
 import { Overview } from './routes/Overview';
 import { McpConfig } from './routes/McpConfig';
 import { Skills } from './routes/Skills';
@@ -20,13 +30,43 @@ type ThemeMode = 'dark' | 'light';
 
 const THEME_STORAGE_KEY = 'aidit-theme-mode';
 
-const NAV_ITEMS = [
-  { to: '/', label: 'Agents', end: true },
-  { to: '/mcp', label: 'MCP' },
-  { to: '/skills', label: 'Skills' },
-  { to: '/diff', label: 'Compare' },
-  { to: '/settings', label: 'Settings' },
+type NavCounts = { agents: number; servers: number; skills: number };
+
+const NAV_ITEMS: {
+  to: string;
+  label: string;
+  icon: LucideIcon;
+  end?: boolean;
+  count?: keyof NavCounts;
+}[] = [
+  { to: '/', label: 'Agents', icon: LayoutGrid, end: true, count: 'agents' },
+  { to: '/mcp', label: 'MCP servers', icon: Plug, count: 'servers' },
+  { to: '/skills', label: 'Skills', icon: BookOpen, count: 'skills' },
+  { to: '/diff', label: 'Compare & sync', icon: GitCompareArrows },
+  { to: '/settings', label: 'Settings', icon: SettingsIcon },
 ];
+
+function useNavCounts(): NavCounts | null {
+  const { scanResult } = useScan();
+  if (!scanResult) return null;
+  const found = scanResult.agents.filter((a) => a.found);
+  return {
+    agents: found.length,
+    servers: found.reduce((n, a) => n + a.configs.reduce((m, c) => m + c.mcpServers.length, 0), 0),
+    skills: found.reduce((n, a) => n + a.skillsDirs.reduce((m, d) => m + d.skills.length, 0), 0),
+  };
+}
+
+function Logo() {
+  return (
+    <NavLink to="/" className="flex items-center gap-2">
+      <div className="w-6 h-6 rounded-md bg-fg text-accent-fg flex items-center justify-center text-[11px] font-bold tracking-tight">
+        ai
+      </div>
+      <span className="text-sm font-semibold tracking-tight text-fg">aidit</span>
+    </NavLink>
+  );
+}
 
 function RegistryUpdateNotifier() {
   const { subscribe, unsubscribe } = useWatcher();
@@ -85,60 +125,87 @@ function AppShell() {
     setThemeMode((current) => (current === 'dark' ? 'light' : 'dark'));
   }, []);
 
+  const counts = useNavCounts();
+  const openPalette = () => window.dispatchEvent(new Event(OPEN_PALETTE_EVENT));
+  const themeLabel = `Switch to ${themeMode === 'dark' ? 'light' : 'dark'} theme`;
+
   return (
     <div className="app-shell">
-      <header className="app-header">
-        <div className="h-full w-full max-w-6xl mx-auto px-6 flex items-center justify-between gap-6">
-          <div className="flex items-center gap-8">
-            <NavLink to="/" className="flex items-center gap-2 group">
-              <div className="w-7 h-7 rounded-md bg-fg text-accent-fg flex items-center justify-center text-xs font-semibold tracking-tight">
-                ai
-              </div>
-              <span className="text-base font-semibold tracking-tight text-fg">aidit</span>
-            </NavLink>
-
-            <nav className="hidden md:flex items-center gap-1">
-              {NAV_ITEMS.map((item) => (
-                <NavLink
-                  key={item.to}
-                  to={item.to}
-                  end={item.end}
-                  className={({ isActive }) =>
-                    `px-3 h-9 inline-flex items-center text-sm font-medium rounded-md transition-colors ${
-                      isActive
-                        ? 'text-fg bg-surface-3'
-                        : 'text-fg-2 hover:text-fg hover:bg-hover'
-                    }`
-                  }
-                >
-                  {item.label}
-                </NavLink>
-              ))}
-            </nav>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={toggleThemeMode}
-              className="btn-ghost"
-              aria-label={`Switch to ${themeMode === 'dark' ? 'light' : 'dark'} theme`}
-              title={`Switch to ${themeMode === 'dark' ? 'light' : 'dark'} theme`}
-            >
-              {themeMode === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
-              <span className="hidden sm:inline">{themeMode === 'dark' ? 'Light' : 'Dark'}</span>
-            </button>
-            <div className="hidden md:flex items-center gap-1.5 text-[11px] text-fg-2 px-2">
-              <Search className="w-3 h-3" />
-              <kbd className="font-mono text-[11px] px-1 py-0.5 rounded bg-surface-3 border border-border">
-                ⌘K
-              </kbd>
-            </div>
-            <div className="hidden md:block w-px h-5 bg-border" />
-            <LiveIndicator />
-          </div>
+      <aside className="app-sidebar">
+        <div className="h-16 flex items-center px-4 border-b border-border">
+          <Logo />
         </div>
-      </header>
+
+        <div className="p-3">
+          <button
+            type="button"
+            onClick={openPalette}
+            className="w-full flex items-center gap-2 h-8 px-2.5 rounded-md border border-border bg-surface text-xs text-fg-3 hover:text-fg-2 hover:border-border-strong transition-colors"
+          >
+            <Search className="w-3.5 h-3.5" />
+            <span className="flex-1 text-left">Search…</span>
+            <kbd className="font-mono text-[10px] px-1 rounded bg-surface-3 border border-border">
+              ⌘K
+            </kbd>
+          </button>
+        </div>
+
+        <nav className="flex-1 px-3 space-y-0.5">
+          {NAV_ITEMS.map((item) => (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              end={item.end}
+              className={({ isActive }) => `nav-item ${isActive ? 'nav-item-active' : ''}`}
+            >
+              <item.icon className="w-4 h-4" strokeWidth={1.75} />
+              <span className="flex-1">{item.label}</span>
+              {item.count && counts ? (
+                <span className="text-[11px] tabular-nums text-fg-3">{counts[item.count]}</span>
+              ) : null}
+            </NavLink>
+          ))}
+        </nav>
+
+        <div className="p-3 border-t border-border flex items-center justify-between">
+          <LiveIndicator />
+          <button
+            type="button"
+            onClick={toggleThemeMode}
+            className="btn-icon"
+            aria-label={themeLabel}
+            title={themeLabel}
+          >
+            {themeMode === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+          </button>
+        </div>
+      </aside>
+
+      <div className="app-topbar">
+        <div className="mr-2">
+          <Logo />
+        </div>
+        {NAV_ITEMS.map((item) => (
+          <NavLink
+            key={item.to}
+            to={item.to}
+            end={item.end}
+            className={({ isActive }) =>
+              `nav-item whitespace-nowrap ${isActive ? 'nav-item-active' : ''}`
+            }
+          >
+            {item.label}
+          </NavLink>
+        ))}
+        <button
+          type="button"
+          onClick={toggleThemeMode}
+          className="btn-icon ml-auto flex-shrink-0"
+          aria-label={themeLabel}
+        >
+          {themeMode === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+        </button>
+      </div>
 
       <main className="app-main">
         <Routes>

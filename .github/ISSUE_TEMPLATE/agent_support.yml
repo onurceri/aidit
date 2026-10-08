@@ -1,0 +1,83 @@
+name: Agent support
+description: Ask aidit to support a new AI agent, or fix paths for an existing one
+title: '[agent] '
+labels: [agent-support]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        aidit can only support paths and formats that are documented by the agent's vendor.
+        Please link the official docs — it makes the request much faster to implement.
+  - type: input
+    id: name
+    attributes:
+      label: Agent name
+      placeholder: e.g. Kiro, Codex CLI, Gemini CLI
+    validations:
+      required: true
+  - type: input
+    id: docs
+    attributes:
+      label: Link to official docs for MCP / skills configuration
+    validations:
+      required: true
+  - type: textarea
+    id: paths
+    attributes:
+      label: Config file paths
+      description: Include every OS where the path differs, and project-level paths if the agent has them.
+      render: text
+      placeholder: |
+        macOS:   ~/Library/Application Support/<agent>/mcp.json
+        Linux:   ~/.config/<agent>/mcp.json
+        Windows: %APPDATA%\<agent>\mcp.json
+        Project: .<agent>/mcp.json
+    validations:
+      required: true
+  - type: dropdown
+    id: format
+    attributes:
+      label: Config file format
+      options:
+        - JSON
+        - JSONC (JSON with comments)
+        - YAML
+        - TOML
+        - Other / unknown
+    validations:
+      required: true
+  - type: dropdown
+    id: mcp_key
+    attributes:
+      label: Key that holds MCP servers
+      options:
+        - mcpServers (Claude Desktop / Cursor style)
+        - servers (VS Code style)
+        - mcp (opencode / Crush style)
+        - mcp_servers (Codex TOML style)
+        - context_servers (Zed style)
+        - extensions (Goose style)
+        - Other (describe below)
+        - The agent has no MCP support
+    validations:
+      required: true
+  - type: textarea
+    id: example
+    attributes:
+      label: Example config
+      description: A minimal example with one server. Remove any secrets.
+      render: json
+  - type: input
+    id: skills
+    attributes:
+      label: Skills / rules directory (if any)
+      placeholder: e.g. ~/.<agent>/skills/<name>/SKILL.md
+  - type: dropdown
+    id: pr
+    attributes:
+      label: Would you open a pull request?
+      description: See "Adding a new agent" in CONTRIBUTING.md.
+      options:
+        - 'Yes'
+        - Maybe, with guidance
+        - 'No'

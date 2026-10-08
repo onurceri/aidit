@@ -1,466 +1,334 @@
-import { useEffect, useRef, useState } from 'react';
-import { RefreshCw, Monitor, FolderGit2, AlertTriangle, Search, PackageOpen } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
+import {
+  RefreshCw,
+  Search,
+  ChevronRight,
+  AlertTriangle,
+  PackageOpen,
+  ExternalLink,
+  FolderGit2,
+} from 'lucide-react';
 import { useScan } from '../hooks/useScan';
 import { useWatcher } from '../hooks/useWatcher';
-import { AgentCard, AgentCardSkeleton } from '../components/AgentCard';
-import type { AgentResult, ConfigResult, WsEvent } from '../api/client';
-import { getAgentFamily } from '../lib/icons';
+import type { AgentResult, WsEvent } from '../api/client';
+import { getAgentIcon } from '../lib/icons';
 import { relativeTime } from '../lib/time';
+import { displayPath } from '../lib/paths';
+import { Page, EmptyState } from '../components/Layout';
 
-type StatusFilter = 'all' | 'active' | 'attention' | 'offline';
-
-interface AgentFamilyGroup {
-  id: string;
-  label: string;
-  icon: typeof Monitor;
-  agents: AgentResult[];
+interface AgentStats {
+  servers: number;
+  enabled: number;
+  skills: number;
+  parseErrors: number;
+  primaryPath: string | null;
+  hasProject: boolean;
 }
 
-function countMcpServers(configs: ConfigResult[]) {
-  let enabled = 0;
-  let disabled = 0;
-  for (const config of configs) {
-    for (const server of config.mcpServers) {
-      if (server.enabled) enabled += 1;
-      else disabled += 1;
-    }
-  }
-  return { enabled, disabled };
-}
-
-function groupAgents(agents: AgentResult[]): {
-  global: AgentResult[];
-  project: AgentResult[];
-  unresolved: AgentResult[];
-} {
-  const global: AgentResult[] = [];
-  const project: AgentResult[] = [];
-  const unresolved: AgentResult[] = [];
-
-  for (const agent of agents) {
-    const hasGlobal =
-      agent.configs.some((c) => c.scope === 'global') ||
-      agent.skillsDirs.some((d) => d.scope === 'global');
-    const hasProject =
-      agent.configs.some((c) => c.scope === 'project') ||
-      agent.skillsDirs.some((d) => d.scope === 'project');
-
-    if (hasGlobal) global.push(agent);
-    if (hasProject) project.push(agent);
-    if (!hasGlobal && !hasProject) unresolved.push(agent);
-  }
-
-  return { global, project, unresolved };
-}
-
-function sortAgents(agents: AgentResult[]): AgentResult[] {
-  return [...agents].sort((a, b) => {
-    if (a.found !== b.found) return a.found ? -1 : 1;
-    return a.label.localeCompare(b.label);
-  });
-}
-
-function matchesSearch(agent: AgentResult, query: string): boolean {
-  const normalized = query.trim().toLowerCase();
-  if (!normalized) return true;
-
-  const haystack = [
-    agent.id,
-    agent.label,
-    ...agent.configs.map((config) => config.absolutePath),
-    ...agent.configs.flatMap((config) => config.mcpServers.map((server) => server.name)),
-    ...agent.skillsDirs.map((dir) => dir.absolutePath),
-  ]
-    .join(' ')
-    .toLowerCase();
-
-  return haystack.includes(normalized);
-}
-
-function matchesStatus(agent: AgentResult, filter: StatusFilter): boolean {
-  const mcp = countMcpServers(agent.configs);
-  const hasIssues =
-    !agent.found ||
-    mcp.enabled + mcp.disabled === 0 ||
-    agent.configs.some((config) => config.parseError);
-
-  if (filter === 'active') return agent.found;
-  if (filter === 'attention') return hasIssues;
-  if (filter === 'offline') return !agent.found;
-  return true;
-}
-
-function filterAgents(
-  agents: AgentResult[],
-  query: string,
-  statusFilter: StatusFilter,
-): AgentResult[] {
-  return agents.filter(
-    (agent) => matchesSearch(agent, query) && matchesStatus(agent, statusFilter),
-  );
-}
-
-function groupFamilies(agents: AgentResult[]): AgentFamilyGroup[] {
-  const groups = new Map<string, AgentFamilyGroup>();
-
-  for (const agent of agents) {
-    const family = getAgentFamily(agent.id);
-    const existing = groups.get(family.id);
-
-    if (existing) {
-      existing.agents.push(agent);
-      continue;
-    }
-
-    groups.set(family.id, {
-      id: family.id,
-      label: family.label,
-      icon: family.icon,
-      agents: [agent],
-    });
-  }
-
-  return [...groups.values()]
-    .map((group) => ({
-      ...group,
-      agents: sortAgents(group.agents),
-    }))
-    .sort((left, right) => {
-      const leftFound = left.agents.some((agent) => agent.found);
-      const rightFound = right.agents.some((agent) => agent.found);
-      if (leftFound !== rightFound) return leftFound ? -1 : 1;
-      return left.label.localeCompare(right.label);
-    });
-}
-
-function summarizeFamily(agents: AgentResult[]) {
-  let enabled = 0;
-  let disabled = 0;
-  let skillFiles = 0;
-  let onlineAgents = 0;
-  let issues = 0;
-
-  for (const agent of agents) {
-    const mcp = countMcpServers(agent.configs);
-    enabled += mcp.enabled;
-    disabled += mcp.disabled;
-    skillFiles += agent.skillsDirs.reduce((total, dir) => total + dir.skills.length, 0);
-
-    if (agent.found) onlineAgents += 1;
-
-    if (
-      !agent.found ||
-      agent.configs.some((config) => config.parseError) ||
-      mcp.enabled + mcp.disabled === 0
-    ) {
-      issues += 1;
-    }
-  }
-
+function statsFor(agent: AgentResult): AgentStats {
+  const servers = agent.configs.flatMap((c) => c.mcpServers);
+  const primary = agent.configs.find((c) => c.scope === 'global') ?? agent.configs[0];
   return {
-    enabled,
-    disabled,
-    totalServers: enabled + disabled,
-    skillFiles,
-    onlineAgents,
-    totalAgents: agents.length,
-    issues,
+    servers: servers.length,
+    enabled: servers.filter((s) => s.enabled).length,
+    skills: agent.skillsDirs.reduce((n, d) => n + d.skills.length, 0),
+    parseErrors: agent.configs.filter((c) => c.parseError).length,
+    primaryPath: primary?.absolutePath ?? agent.skillsDirs[0]?.absolutePath ?? null,
+    hasProject:
+      agent.configs.some((c) => c.scope === 'project') ||
+      agent.skillsDirs.some((d) => d.scope === 'project'),
   };
 }
 
-const STATUS_FILTERS: { value: StatusFilter; label: string }[] = [
-  { value: 'all', label: 'All' },
-  { value: 'active', label: 'Active' },
-  { value: 'attention', label: 'Needs setup' },
-  { value: 'offline', label: 'Offline' },
-];
+function matches(agent: AgentResult, query: string): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  return [
+    agent.label,
+    agent.id,
+    ...agent.configs.map((c) => c.absolutePath),
+    ...agent.configs.flatMap((c) => c.mcpServers.map((s) => s.name)),
+    ...agent.skillsDirs.map((d) => d.absolutePath),
+  ]
+    .join(' ')
+    .toLowerCase()
+    .includes(q);
+}
 
-function SectionList({
-  icon: Icon,
-  title,
-  families,
-}: {
-  icon: typeof Monitor;
-  title: string;
-  families: AgentFamilyGroup[];
-}) {
-  if (families.length === 0) return null;
+function Count({ n, one, many = `${one}s` }: { n: number; one: string; many?: string }) {
+  return (
+    <span>
+      <span className="tabular-nums text-fg">{n}</span> {n === 1 ? one : many}
+    </span>
+  );
+}
 
-  const totalAgents = families.reduce((total, family) => total + family.agents.length, 0);
+function AgentTile({ agent }: { agent: AgentResult }) {
+  const Icon = getAgentIcon(agent.id);
+  const stats = statsFor(agent);
+  const status =
+    stats.parseErrors > 0
+      ? 'status-err'
+      : stats.servers > 0 || stats.skills > 0
+        ? 'status-ok'
+        : 'status-warn';
+  const statusText =
+    stats.parseErrors > 0
+      ? 'Config has errors'
+      : stats.servers > 0
+        ? `${stats.enabled} of ${stats.servers} servers enabled`
+        : stats.skills > 0
+          ? 'Skills only'
+          : 'No MCP servers yet';
+  const target = stats.servers > 0 || stats.skills === 0 ? `/mcp/${agent.id}` : '/skills';
 
   return (
-    <section className="space-y-3">
-      <div className="flex items-center justify-between gap-2 pb-2 border-b border-border">
-        <div className="flex items-center gap-2 text-fg-2">
-          <Icon className="w-4 h-4" />
-          <h3 className="text-sm font-semibold text-fg">{title}</h3>
-          <span className="text-xs text-fg-2">
-            {families.length} {families.length === 1 ? 'family' : 'families'} · {totalAgents}{' '}
-            {totalAgents === 1 ? 'agent' : 'agents'}
-          </span>
+    <Link
+      to={target}
+      className="card card-hover group flex flex-col gap-3 p-4 focus:outline-none focus-visible:ring-2 focus-visible:ring-fg"
+    >
+      <div className="flex items-start gap-3">
+        <div className="w-9 h-9 rounded-md border border-border bg-surface-2 flex items-center justify-center flex-shrink-0">
+          <Icon className="w-4 h-4 text-fg" strokeWidth={1.75} />
         </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <h3 className="text-sm font-semibold text-fg truncate">{agent.label}</h3>
+            {stats.hasProject ? (
+              <span className="badge" title="Has project-level configuration">
+                <FolderGit2 className="w-3 h-3" />
+                project
+              </span>
+            ) : null}
+          </div>
+          <div className="mt-0.5 flex items-center gap-1.5 text-xs text-fg-2">
+            <span className={`status-dot ${status}`} />
+            {statusText}
+          </div>
+        </div>
+        <ChevronRight className="w-4 h-4 text-fg-3 group-hover:text-fg transition-colors flex-shrink-0" />
       </div>
 
-      <div className="space-y-4">
-        {families.map((family) => {
-          if (family.agents.length === 1) {
-            return <AgentCard key={family.id} agent={family.agents[0]} />;
-          }
-
-          const summary = summarizeFamily(family.agents);
-          const FamilyIcon = family.icon;
-          const summaryCopy =
-            summary.totalServers > 0
-              ? `${summary.totalServers} MCP server${summary.totalServers === 1 ? '' : 's'}`
-              : 'no MCP servers yet';
-
-          return (
-            <div key={family.id} className="card p-4 space-y-3">
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex items-start gap-3 min-w-0">
-                  <div className="mt-0.5 flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-md border border-border bg-surface-2 text-fg">
-                    <FamilyIcon className="h-4.5 w-4.5" strokeWidth={1.5} />
-                  </div>
-                  <div className="space-y-0.5 min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <h4 className="text-sm font-semibold text-fg">{family.label}</h4>
-                      {summary.issues === 0 ? (
-                        <span className="badge">Ready</span>
-                      ) : (
-                        <span className="badge">
-                          {summary.issues} issue{summary.issues === 1 ? '' : 's'}
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-xs text-fg-2">
-                      {summary.totalAgents} variant{summary.totalAgents === 1 ? '' : 's'} ·{' '}
-                      {summary.onlineAgents} online · {summaryCopy} · {summary.skillFiles} skill
-                      {summary.skillFiles === 1 ? '' : 's'}
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              <div className="space-y-2 border-t border-border pt-3">
-                {family.agents.map((agent) => (
-                  <AgentCard key={agent.id} agent={agent} />
-                ))}
-              </div>
-            </div>
-          );
-        })}
+      <div className="flex items-center gap-4 text-xs text-fg-2">
+        <Count n={stats.servers} one="server" />
+        <Count n={stats.skills} one="skill" />
+        <Count n={agent.configs.length} one="config" />
       </div>
-    </section>
+
+      {stats.primaryPath ? (
+        <div
+          className="font-mono text-[11px] text-fg-3 truncate border-t border-border pt-2.5 -mx-4 px-4"
+          title={stats.primaryPath}
+        >
+          {displayPath(stats.primaryPath)}
+        </div>
+      ) : null}
+    </Link>
+  );
+}
+
+function MissingChip({ agent }: { agent: AgentResult }) {
+  const Icon = getAgentIcon(agent.id);
+  const className =
+    'group flex items-center gap-2 h-8 px-2.5 rounded-md border border-border text-xs text-fg-2 hover:text-fg hover:border-border-strong transition-colors min-w-0';
+  const content = (
+    <>
+      <Icon className="w-3.5 h-3.5 text-fg-3 flex-shrink-0" strokeWidth={1.75} />
+      <span className="truncate">{agent.label}</span>
+      {agent.homepage ? (
+        <ExternalLink className="w-3 h-3 ml-auto text-fg-3 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
+      ) : null}
+    </>
+  );
+
+  return agent.homepage ? (
+    <a
+      href={agent.homepage}
+      target="_blank"
+      rel="noreferrer"
+      className={className}
+      title={`${agent.label}: no config found at known paths. Open docs`}
+    >
+      {content}
+    </a>
+  ) : (
+    <div className={className}>{content}</div>
   );
 }
 
 export function Overview() {
   const { scanResult, loading, error, lastScanned, refresh } = useScan();
   const { subscribe, unsubscribe } = useWatcher();
-  const [externalUpdate, setExternalUpdate] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
-  const externalUpdateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [query, setQuery] = useState('');
+  const [showMissing, setShowMissing] = useState(false);
 
   useEffect(() => {
     const handler = (event: WsEvent) => {
-      if (event.event === 'scan:full') {
-        refresh();
-        setExternalUpdate(true);
-        if (externalUpdateTimerRef.current) clearTimeout(externalUpdateTimerRef.current);
-        externalUpdateTimerRef.current = setTimeout(() => setExternalUpdate(false), 3000);
-      }
+      if (event.event === 'scan:full') refresh();
     };
-
     subscribe('scan:full', handler);
-    return () => {
-      unsubscribe('scan:full', handler);
-      if (externalUpdateTimerRef.current) clearTimeout(externalUpdateTimerRef.current);
-    };
+    return () => unsubscribe('scan:full', handler);
   }, [subscribe, unsubscribe, refresh]);
 
-  const activeAgents = scanResult?.agents.filter((a) => a.found).length ?? 0;
-  const totalAgents = scanResult?.agents.length ?? 0;
-  const activePercent = totalAgents > 0 ? (activeAgents / totalAgents) * 100 : 0;
-  const { global, project, unresolved } = groupAgents(scanResult?.agents ?? []);
-  const filteredGlobal = filterAgents(sortAgents(global), searchQuery, statusFilter);
-  const filteredProject = filterAgents(sortAgents(project), searchQuery, statusFilter);
-  const filteredUnresolved = filterAgents(sortAgents(unresolved), searchQuery, statusFilter);
-  const filteredTotal = filteredGlobal.length + filteredProject.length + filteredUnresolved.length;
-  const hasFilters = searchQuery.trim().length > 0 || statusFilter !== 'all';
+  const agents = useMemo(() => scanResult?.agents ?? [], [scanResult]);
+  const found = useMemo(
+    () =>
+      agents
+        .filter((a) => a.found && matches(a, query))
+        .sort((a, b) => {
+          const diff = statsFor(b).servers - statsFor(a).servers;
+          return diff !== 0 ? diff : a.label.localeCompare(b.label);
+        }),
+    [agents, query],
+  );
+  const missing = useMemo(
+    () =>
+      agents
+        .filter((a) => !a.found && matches(a, query))
+        .sort((a, b) => a.label.localeCompare(b.label)),
+    [agents, query],
+  );
+
+  const totals = useMemo(() => {
+    const detected = agents.filter((a) => a.found).map(statsFor);
+    return {
+      detected: detected.length,
+      servers: detected.reduce((n, s) => n + s.servers, 0),
+      enabled: detected.reduce((n, s) => n + s.enabled, 0),
+      skills: detected.reduce((n, s) => n + s.skills, 0),
+      errors: detected.reduce((n, s) => n + s.parseErrors, 0),
+    };
+  }, [agents]);
+
+  const searching = query.trim().length > 0;
+  const missingOpen = showMissing || (searching && missing.length > 0);
 
   return (
-    <div className="w-full flex flex-col gap-6">
-      <div className="card p-5">
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 text-sm">
-          <div>
-            <div className="text-xs text-fg-2">Status</div>
-            <div className="mt-1 flex items-center gap-2">
-              <span className="dot-on" />
-              <span className="font-medium text-fg">Active</span>
-            </div>
-          </div>
-          <div>
-            <div className="text-xs text-fg-2">Agents</div>
-            <div className="mt-1 flex items-baseline gap-1.5">
-              <span className="font-semibold text-fg">{activeAgents}</span>
-              <span className="text-fg-2">/ {totalAgents}</span>
-              <span className="text-xs text-fg-2">({Math.round(activePercent)}%)</span>
-            </div>
-          </div>
-          <div>
-            <div className="text-xs text-fg-2">Last scan</div>
-            <div className="mt-1 font-medium text-fg">
-              {lastScanned ? relativeTime(lastScanned) : 'Never'}
-            </div>
-          </div>
-          <div>
-            <div className="text-xs text-fg-2">Updates</div>
-            <div className="mt-1 font-medium text-fg">
-              {externalUpdate ? 'External change detected' : 'Up to date'}
-            </div>
-          </div>
-        </div>
-        <div className="mt-4 h-1 w-full bg-surface-3 rounded-full overflow-hidden">
-          <div className="h-full bg-fg transition-all" style={{ width: `${activePercent}%` }} />
-        </div>
-      </div>
-
-      <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h1 className="heading-page">Agents</h1>
-          <p className="mt-1 text-sm text-fg-2">
-            Detected AI assistant configurations across your system.
-          </p>
-        </div>
-
-        <div className="flex items-center gap-2">
+    <Page
+      title="Agents"
+      description={
+        scanResult
+          ? `Scanned ${lastScanned ? relativeTime(lastScanned) : 'just now'} · project ${displayPath(scanResult.workingDirectory)}`
+          : 'AI coding agents on this machine'
+      }
+      actions={
+        <>
+          <label className="relative hidden sm:block">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 w-3.5 h-3.5 -translate-y-1/2 text-fg-3" />
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Filter agents, paths, servers…"
+              className="input h-8 w-64 pl-8"
+            />
+          </label>
           <button onClick={refresh} disabled={loading} className="btn-secondary">
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
             Re-scan
           </button>
-        </div>
-      </header>
-
-      <div className="card p-4 flex flex-col gap-3">
-        <div className="flex flex-col lg:flex-row lg:items-center gap-3">
-          <label className="relative flex-1">
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 w-4 h-4 -translate-y-1/2 text-fg-3" />
-            <input
-              value={searchQuery}
-              onChange={(event) => setSearchQuery(event.target.value)}
-              placeholder="Search agents, paths, or MCP server names…"
-              className="input pl-9"
-            />
-          </label>
-
-          <div className="flex flex-wrap items-center gap-1 p-0.5 rounded-md border border-border bg-surface-2">
-            {STATUS_FILTERS.map((filter) => (
-              <button
-                key={filter.value}
-                type="button"
-                onClick={() => setStatusFilter(filter.value)}
-                className={`h-7 px-3 rounded text-xs font-medium transition-colors ${
-                  statusFilter === filter.value
-                    ? 'bg-surface text-fg'
-                    : 'text-fg-2 hover:text-fg'
-                }`}
-              >
-                {filter.label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 text-xs text-fg-2">
-          <span>
-            Showing {filteredTotal} of {totalAgents} {totalAgents === 1 ? 'agent' : 'agents'}
-          </span>
-          {hasFilters ? (
-            <button
-              type="button"
-              onClick={() => {
-                setSearchQuery('');
-                setStatusFilter('all');
-              }}
-              className="btn-ghost btn-sm"
-            >
-              Clear filters
-            </button>
-          ) : null}
-        </div>
-      </div>
-
+        </>
+      }
+    >
       {error ? (
-        <div className="card p-4 border-border-strong">
-          <div className="flex items-start gap-3">
-            <AlertTriangle className="w-4 h-4 text-fg flex-shrink-0 mt-0.5" />
-            <div className="min-w-0 flex-1">
-              <div className="text-sm font-medium text-fg">Couldn't load agents</div>
-              <p className="mt-0.5 text-sm text-fg-2">{error}</p>
-            </div>
-            <button onClick={refresh} className="btn-secondary btn-sm">
-              Retry
-            </button>
+        <div className="card p-4 mb-6 flex items-start gap-3">
+          <AlertTriangle className="w-4 h-4 text-fg flex-shrink-0 mt-0.5" />
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-medium text-fg">Couldn&apos;t load agents</div>
+            <p className="mt-0.5 text-sm text-fg-2">{error}</p>
           </div>
-        </div>
-      ) : null}
-
-      {loading && !scanResult ? (
-        <div className="space-y-3">
-          {Array.from({ length: 6 }).map((_, index) => (
-            <AgentCardSkeleton key={index} />
-          ))}
-        </div>
-      ) : null}
-
-      {!loading && !error && scanResult && scanResult.agents.length === 0 ? (
-        <div className="card flex flex-col items-center justify-center py-16 text-center">
-          <PackageOpen className="w-10 h-10 mb-3 text-fg-3" strokeWidth={1} />
-          <h3 className="text-sm font-semibold text-fg">No agents detected</h3>
-          <p className="mt-1 max-w-sm text-sm text-fg-2">
-            No agent configurations detected in default paths. Configure custom scanner search
-            paths.
-          </p>
-          <button onClick={refresh} className="btn-primary mt-4">
-            Run scan
+          <button onClick={refresh} className="btn-secondary btn-sm">
+            Retry
           </button>
         </div>
       ) : null}
 
-      {!loading && !error && scanResult && scanResult.agents.length > 0 ? (
-        <div className="space-y-8">
-          {filteredTotal === 0 ? (
-            <div className="card flex flex-col items-center justify-center gap-2 py-12 text-center">
-              <AlertTriangle className="w-8 h-8 text-fg-3" strokeWidth={1.5} />
-              <h3 className="text-sm font-semibold text-fg">No agents match these filters</h3>
-              <p className="max-w-md text-sm text-fg-2">
-                Adjust the search query or switch the status filter to widen the result set.
-              </p>
-            </div>
-          ) : (
-            <>
-              <SectionList
-                icon={Monitor}
-                title="Global"
-                families={groupFamilies(filteredGlobal)}
-              />
-              <SectionList
-                icon={FolderGit2}
-                title="Project"
-                families={groupFamilies(filteredProject)}
-              />
-              {filteredUnresolved.length > 0 ? (
-                <SectionList
-                  icon={AlertTriangle}
-                  title="Unresolved"
-                  families={groupFamilies(filteredUnresolved)}
-                />
-              ) : null}
-            </>
-          )}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-8">
+        <div className="stat">
+          <div className="stat-label">Agents detected</div>
+          <div className="stat-value">
+            {totals.detected}
+            <span className="text-sm font-normal text-fg-3"> / {agents.length}</span>
+          </div>
+        </div>
+        <div className="stat">
+          <div className="stat-label">MCP servers</div>
+          <div className="stat-value">
+            {totals.servers}
+            <span className="text-sm font-normal text-fg-3"> · {totals.enabled} enabled</span>
+          </div>
+        </div>
+        <div className="stat">
+          <div className="stat-label">Skills</div>
+          <div className="stat-value">{totals.skills}</div>
+        </div>
+        <div className="stat">
+          <div className="stat-label">Config errors</div>
+          <div className="stat-value flex items-center gap-2">
+            {totals.errors}
+            <span className={`status-dot ${totals.errors > 0 ? 'status-err' : 'status-ok'}`} />
+          </div>
+        </div>
+      </div>
+
+      {loading && !scanResult ? (
+        <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-3">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div key={i} className="card h-[132px] animate-pulse bg-surface-2" />
+          ))}
         </div>
       ) : null}
-    </div>
+
+      {scanResult ? (
+        <>
+          <div className="section-label !px-0 !pt-0 mb-2">
+            <span>Detected · {found.length}</span>
+          </div>
+          {found.length > 0 ? (
+            <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-3">
+              {found.map((agent) => (
+                <AgentTile key={agent.id} agent={agent} />
+              ))}
+            </div>
+          ) : (
+            <div className="card">
+              <EmptyState icon={PackageOpen} title={searching ? 'No matches' : 'No agents found'}>
+                {searching
+                  ? 'No detected agent matches this filter.'
+                  : 'aidit found no agent configs at the known paths. Add custom paths in Settings → Paths.'}
+              </EmptyState>
+            </div>
+          )}
+
+          {missing.length > 0 ? (
+            <div className="mt-8">
+              <button
+                type="button"
+                onClick={() => setShowMissing((v) => !v)}
+                className="section-label !px-0 w-full hover:text-fg-2 transition-colors"
+                aria-expanded={missingOpen}
+              >
+                <span className="flex items-center gap-1">
+                  <ChevronRight
+                    className={`w-3 h-3 transition-transform ${missingOpen ? 'rotate-90' : ''}`}
+                  />
+                  Not detected · {missing.length}
+                </span>
+                <span className="normal-case tracking-normal font-normal">
+                  {missingOpen ? 'Hide' : 'Show all supported agents'}
+                </span>
+              </button>
+              {missingOpen ? (
+                <div className="mt-2 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2">
+                  {missing.map((agent) => (
+                    <MissingChip key={agent.id} agent={agent} />
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+        </>
+      ) : null}
+    </Page>
   );
 }

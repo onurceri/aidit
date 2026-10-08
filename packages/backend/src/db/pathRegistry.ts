@@ -1,4 +1,4 @@
-import { db } from './db.js';
+import { prepare, transaction } from './db.js';
 
 export interface PathRegistryRow {
   id: string;
@@ -24,12 +24,12 @@ export interface PathRegistryInput {
   sort_order?: number;
 }
 
-const insertStmt = db.prepare(`
+const insertStmt = prepare<object>(`
   INSERT INTO path_registry (id, label, path, type, agent, scope, source, enabled, sort_order)
   VALUES (@id, @label, @path, @type, @agent, @scope, @source, @enabled, @sort_order)
 `);
 
-const upsertStmt = db.prepare(`
+const upsertStmt = prepare<object>(`
   INSERT INTO path_registry (id, label, path, type, agent, scope, source, enabled, sort_order)
   VALUES (@id, @label, @path, @type, @agent, @scope, @source, @enabled, @sort_order)
   ON CONFLICT(id) DO UPDATE SET
@@ -37,17 +37,17 @@ const upsertStmt = db.prepare(`
     scope = @scope, source = @source, enabled = @enabled, sort_order = @sort_order
 `);
 
-const getAllStmt = db.prepare<[], PathRegistryRow>(
+const getAllStmt = prepare<[], PathRegistryRow>(
   `SELECT * FROM path_registry ORDER BY sort_order, id`,
 );
 
-const getByIdStmt = db.prepare<[string], PathRegistryRow>(
-  `SELECT * FROM path_registry WHERE id = ?`,
-);
+const getByIdStmt = prepare<[string], PathRegistryRow>(`SELECT * FROM path_registry WHERE id = ?`);
 
-const deleteByIdStmt = db.prepare<[string]>(`DELETE FROM path_registry WHERE id = ?`);
+const deleteByIdStmt = prepare<[string]>(`DELETE FROM path_registry WHERE id = ?`);
 
-const deleteBuiltinStmt = db.prepare(`DELETE FROM path_registry WHERE source = 'builtin'`);
+const deleteAllStmt = prepare(`DELETE FROM path_registry`);
+
+const deleteBuiltinStmt = prepare<object>(`DELETE FROM path_registry WHERE source = 'builtin'`);
 
 function normalizeInput(input: PathRegistryInput) {
   return {
@@ -70,29 +70,27 @@ export function getAllEntries(): PathRegistryRow[] {
 }
 
 export function getEntryById(id: string): PathRegistryRow | undefined {
-  return getByIdStmt.get(id);
+  return getByIdStmt.get([id]);
 }
 
 export function deleteEntry(id: string): void {
-  deleteByIdStmt.run(id);
+  deleteByIdStmt.run([id]);
 }
 
 export function resetBuiltins(builtinEntries: PathRegistryInput[]): void {
-  const reset = db.transaction(() => {
+  transaction(() => {
     deleteBuiltinStmt.run();
     for (const entry of builtinEntries) {
       insertStmt.run(normalizeInput({ ...entry, source: 'builtin' }));
     }
   });
-  reset();
 }
 
 export function replaceAll(entries: PathRegistryInput[]): void {
-  const replace = db.transaction(() => {
-    db.exec('DELETE FROM path_registry');
+  transaction(() => {
+    deleteAllStmt.run();
     for (const entry of entries) {
       insertStmt.run(normalizeInput(entry));
     }
   });
-  replace();
 }

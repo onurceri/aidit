@@ -27,7 +27,7 @@ export function SkillEditor({
 
   const handleSave = async () => {
     if (!filename.trim()) {
-      setError('Filename is required');
+      setError('Name is required');
       return;
     }
     setSaving(true);
@@ -44,13 +44,15 @@ export function SkillEditor({
   return (
     <div className="flex flex-col h-full">
       <div className="flex items-center gap-2 pb-3 border-b border-border">
-        <span className="text-sm font-medium text-fg">
-          {isNew ? 'New skill' : 'Editing'}
-        </span>
+        <span className="text-sm font-medium text-fg">{isNew ? 'New skill' : 'Editing'}</span>
         {!isNew ? <span className="text-sm text-fg-2 truncate">{filename}</span> : null}
         <div className="ml-auto flex items-center gap-1">
           <button onClick={handleSave} disabled={saving} className="btn-primary btn-sm">
-            {saving ? <Loader className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+            {saving ? (
+              <Loader className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <Save className="w-3.5 h-3.5" />
+            )}
             {saving ? 'Saving' : 'Save'}
           </button>
           <button onClick={onClose} className="btn-icon" aria-label="Close">
@@ -62,19 +64,19 @@ export function SkillEditor({
       {isNew ? (
         <div className="py-3 border-b border-border space-y-1.5">
           <div className="flex items-center gap-2">
-            <label className="text-xs text-fg-2 flex-shrink-0">Filename</label>
+            <label className="text-xs text-fg-2 flex-shrink-0">Name</label>
             <input
               type="text"
               value={filename}
               onChange={(e) => setFilename(e.target.value)}
-              placeholder="my-skill.md"
+              placeholder="my-skill"
               className="input flex-1 text-xs"
               autoFocus
             />
           </div>
           {skillsDir ? (
-            <p className="font-mono text-xs text-fg-2 truncate" title={skillsDir}>
-              {skillsDir}/
+            <p className="font-mono text-xs text-fg-3 truncate" title={skillsDir}>
+              {skillsDir}/{filename.trim() || 'my-skill'}/SKILL.md
             </p>
           ) : null}
         </div>
@@ -86,7 +88,7 @@ export function SkillEditor({
         </div>
       ) : null}
 
-      <div className="flex-1 mt-3 rounded-md border border-border overflow-hidden">
+      <div className="flex-1 min-h-[60vh] mt-3 rounded-md border border-border overflow-hidden">
         <Editor
           height="100%"
           language="markdown"

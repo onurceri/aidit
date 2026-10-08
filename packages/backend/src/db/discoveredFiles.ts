@@ -1,4 +1,4 @@
-import { db } from './db.js';
+import { prepare } from './db.js';
 
 export interface DiscoveredFileRow {
   id: number;
@@ -21,7 +21,7 @@ export interface DiscoveredFileInput {
   size_bytes: number;
 }
 
-const upsertStmt = db.prepare(`
+const upsertStmt = prepare<object>(`
   INSERT INTO discovered_files (path_entry_id, absolute_path, type, agent_id, first_seen_at, last_seen_at, last_modified, size_bytes)
   VALUES (@path_entry_id, @absolute_path, @type, @agent_id, @now, @now, @last_modified, @size_bytes)
   ON CONFLICT(absolute_path) DO UPDATE SET
@@ -33,23 +33,23 @@ const upsertStmt = db.prepare(`
     size_bytes = @size_bytes
 `);
 
-const getByPathEntryStmt = db.prepare<[string], DiscoveredFileRow>(
+const getByPathEntryStmt = prepare<[string], DiscoveredFileRow>(
   `SELECT * FROM discovered_files WHERE path_entry_id = ?`,
 );
 
-const getByAbsolutePathStmt = db.prepare<[string], DiscoveredFileRow>(
+const getByAbsolutePathStmt = prepare<[string], DiscoveredFileRow>(
   `SELECT * FROM discovered_files WHERE absolute_path = ?`,
 );
 
 export function upsertDiscoveredFile(input: DiscoveredFileInput): DiscoveredFileRow {
   upsertStmt.run({ ...input, now: new Date().toISOString() });
-  return getByAbsolutePathStmt.get(input.absolute_path) as DiscoveredFileRow;
+  return getByAbsolutePathStmt.get([input.absolute_path]) as DiscoveredFileRow;
 }
 
 export function getByPathEntry(pathEntryId: string): DiscoveredFileRow[] {
-  return getByPathEntryStmt.all(pathEntryId);
+  return getByPathEntryStmt.all([pathEntryId]);
 }
 
 export function getByAbsolutePath(absolutePath: string): DiscoveredFileRow | undefined {
-  return getByAbsolutePathStmt.get(absolutePath);
+  return getByAbsolutePathStmt.get([absolutePath]);
 }

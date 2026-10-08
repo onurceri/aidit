@@ -1,4 +1,4 @@
-import { db } from './db.js';
+import { prepare } from './db.js';
 
 export interface WriteLogRow {
   id: number;
@@ -20,20 +20,20 @@ export interface WriteLogInput {
   triggered_by: 'user_form' | 'user_json' | 'sync' | 'restore';
 }
 
-const insertStmt = db.prepare(`
+const insertStmt = prepare<object>(`
   INSERT INTO write_log (written_at, path_entry_id, absolute_path, backup_path, content_before, content_after, triggered_by)
   VALUES (@written_at, @path_entry_id, @absolute_path, @backup_path, @content_before, @content_after, @triggered_by)
 `);
 
-const historyStmt = db.prepare<[string], WriteLogRow>(
+const historyStmt = prepare<[string], WriteLogRow>(
   `SELECT * FROM write_log WHERE path_entry_id = ? ORDER BY written_at DESC`,
 );
 
-const getByTimestampStmt = db.prepare<[string], WriteLogRow>(
+const getByTimestampStmt = prepare<[string], WriteLogRow>(
   `SELECT * FROM write_log WHERE written_at = ?`,
 );
 
-const getByIdStmt = db.prepare<[number], WriteLogRow>(`SELECT * FROM write_log WHERE id = ?`);
+const getByIdStmt = prepare<[number], WriteLogRow>(`SELECT * FROM write_log WHERE id = ?`);
 
 export function insertWriteLog(input: WriteLogInput): number {
   const result = insertStmt.run({ ...input, written_at: new Date().toISOString() });
@@ -41,13 +41,13 @@ export function insertWriteLog(input: WriteLogInput): number {
 }
 
 export function getHistory(pathEntryId: string): WriteLogRow[] {
-  return historyStmt.all(pathEntryId);
+  return historyStmt.all([pathEntryId]);
 }
 
 export function getByTimestamp(timestamp: string): WriteLogRow | undefined {
-  return getByTimestampStmt.get(timestamp);
+  return getByTimestampStmt.get([timestamp]);
 }
 
 export function getById(id: number): WriteLogRow | undefined {
-  return getByIdStmt.get(id);
+  return getByIdStmt.get([id]);
 }

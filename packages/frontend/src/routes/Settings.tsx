@@ -10,6 +10,9 @@ import {
   ExternalLink,
 } from 'lucide-react';
 import { ConfirmModal } from '../components/ConfirmModal';
+import { Page } from '../components/Layout';
+import { displayPath } from '../lib/paths';
+import { useScan } from '../hooks/useScan';
 import { useToast } from '../context/ToastContext';
 import { relativeTime } from '../lib/time';
 import {
@@ -65,6 +68,7 @@ export function Settings() {
   const [apiPort, setApiPort] = useState(3001);
   const [uiPort, setUiPort] = useState(3000);
   const [backupRetention, setBackupRetention] = useState(10);
+  useScan(); // re-render once the scan (and home dir) arrives so paths show as ~/…
   const [backupDir, setBackupDir] = useState('~/.config/aidit/backups');
   const [projectScanDirs, setProjectScanDirs] = useState<string[]>([]);
   const [newProjectDir, setNewProjectDir] = useState('');
@@ -227,259 +231,256 @@ export function Settings() {
 
   if (loading) {
     return (
-      <div className="p-6 flex items-center justify-center min-h-[50vh]">
-        <Loader className="w-5 h-5 text-fg-2 animate-spin" />
-      </div>
+      <Page title="Settings">
+        <div className="flex items-center justify-center min-h-[50vh]">
+          <Loader className="w-5 h-5 text-fg-2 animate-spin" />
+        </div>
+      </Page>
     );
   }
 
   return (
-    <div className="w-full max-w-4xl mx-auto flex flex-col gap-6">
-      <header className="border-b border-border pb-4">
-        <h1 className="heading-page">Settings</h1>
-        <p className="mt-1 text-sm text-fg-2">
-          Control local ports, scan paths, registry defaults, and backup behavior.
-        </p>
-      </header>
-
-      {error ? (
-        <div className="card p-4 flex items-start gap-3 border-border-strong">
-          <AlertTriangle className="w-4 h-4 text-fg flex-shrink-0 mt-0.5" />
-          <p className="text-sm text-fg">{error}</p>
-        </div>
-      ) : null}
-
-      <section className="card p-6">
-        <h2 className="text-sm font-semibold text-fg mb-4">General</h2>
-
-        <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="label">API port</label>
-              <input
-                type="number"
-                value={apiPort || ''}
-                onChange={(e) => handleApiPortChange(Number(e.target.value))}
-                min={1}
-                max={65535}
-                className="input"
-              />
-            </div>
-            <div>
-              <label className="label">UI port</label>
-              <input
-                type="number"
-                value={uiPort || ''}
-                onChange={(e) => handleUiPortChange(Number(e.target.value))}
-                min={1}
-                max={65535}
-                className="input"
-              />
-            </div>
+    <Page title="Settings" description="Scan paths, backups and the path registry">
+      <div className="max-w-4xl flex flex-col gap-6">
+        {error ? (
+          <div className="card p-4 flex items-start gap-3 border-border-strong">
+            <AlertTriangle className="w-4 h-4 text-fg flex-shrink-0 mt-0.5" />
+            <p className="text-sm text-fg">{error}</p>
           </div>
+        ) : null}
 
-          <div>
-            <label className="label">Project directories</label>
-            {projectScanDirs.length > 0 ? (
-              <ul className="mb-2 space-y-1.5">
-                {projectScanDirs.map((dir, i) => (
-                  <li
-                    key={i}
-                    className="flex items-center justify-between rounded-md border border-border bg-surface-2 px-3 py-2 text-sm font-mono"
-                  >
-                    <span className="truncate">{dir}</span>
-                    <button
-                      onClick={() => handleRemoveProjectDir(i)}
-                      className="btn-icon flex-shrink-0"
-                      aria-label="Remove directory"
+        <section className="card p-6">
+          <h2 className="text-sm font-semibold text-fg mb-4">General</h2>
+
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="label">API port</label>
+                <input
+                  type="number"
+                  value={apiPort || ''}
+                  onChange={(e) => handleApiPortChange(Number(e.target.value))}
+                  min={1}
+                  max={65535}
+                  className="input"
+                />
+              </div>
+              <div>
+                <label className="label">UI port</label>
+                <input
+                  type="number"
+                  value={uiPort || ''}
+                  onChange={(e) => handleUiPortChange(Number(e.target.value))}
+                  min={1}
+                  max={65535}
+                  className="input"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="label">Project directories</label>
+              {projectScanDirs.length > 0 ? (
+                <ul className="mb-2 space-y-1.5">
+                  {projectScanDirs.map((dir, i) => (
+                    <li
+                      key={i}
+                      className="flex items-center justify-between rounded-md border border-border bg-surface-2 px-3 py-2 text-sm font-mono"
                     >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-            <div className="flex gap-2">
-              <input
-                value={newProjectDir}
-                onChange={(e) => setNewProjectDir(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleAddProjectDir()}
-                placeholder="/Users/you/Projects/my-agent"
-                className="input flex-1 font-mono"
-              />
-              <button
-                onClick={handleAddProjectDir}
-                disabled={!newProjectDir.trim()}
-                className="btn-primary"
-              >
-                <Plus className="w-4 h-4" />
-                Add
-              </button>
-            </div>
-            <p className="helper">Leave empty to only scan global configs.</p>
-          </div>
-        </div>
-      </section>
-
-      <section className="card p-6">
-        <div className="flex items-center justify-between gap-4">
-          <div>
-            <h2 className="text-sm font-semibold text-fg">Path registry</h2>
-            <p className="mt-1 text-sm text-fg-2">
-              {entries.length} entries · {builtinCount} built-in · {userCount} user
-            </p>
-            <p className="mt-1 text-xs text-fg-3">
-              Manage which config files and skills directories aidit scans.
-            </p>
-          </div>
-          <div className="flex items-center gap-2 flex-shrink-0">
-            <button
-              onClick={() => setShowResetBuiltinsModal(true)}
-              disabled={resettingBuiltins || builtinCount === 0}
-              className="btn-secondary"
-            >
-              <RotateCcw className="w-3.5 h-3.5" />
-              {resettingBuiltins ? 'Resetting' : 'Reset built-ins'}
-            </button>
-            <Link to="/settings/paths" className="btn-primary">
-              Manage
-              <ExternalLink className="w-3.5 h-3.5" />
-            </Link>
-          </div>
-        </div>
-      </section>
-
-      <section className="card p-6">
-        <h2 className="text-sm font-semibold text-fg mb-4">Backups</h2>
-
-        <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="label">Backup retention</label>
-              <input
-                type="number"
-                value={backupRetention || ''}
-                onChange={(e) => handleRetentionChange(Number(e.target.value))}
-                min={1}
-                className="input"
-              />
-              <p className="helper">Number of backups to keep per config file.</p>
-            </div>
-            <div>
-              <label className="label">Backup directory</label>
-              <div className="flex items-center gap-2">
-                <span className="input flex-1 truncate font-mono" title={backupDir}>
-                  {backupDir}
-                </span>
-                <button onClick={handleOpenBackupFolder} className="btn-secondary flex-shrink-0">
-                  <FolderOpen className="w-4 h-4" />
-                  Open
+                      <span className="truncate">{dir}</span>
+                      <button
+                        onClick={() => handleRemoveProjectDir(i)}
+                        className="btn-icon flex-shrink-0"
+                        aria-label="Remove directory"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+              <div className="flex gap-2">
+                <input
+                  value={newProjectDir}
+                  onChange={(e) => setNewProjectDir(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleAddProjectDir()}
+                  placeholder="/Users/you/Projects/my-agent"
+                  className="input flex-1 font-mono"
+                />
+                <button
+                  onClick={handleAddProjectDir}
+                  disabled={!newProjectDir.trim()}
+                  className="btn-primary"
+                >
+                  <Plus className="w-4 h-4" />
+                  Add
                 </button>
               </div>
+              <p className="helper">Leave empty to only scan global configs.</p>
             </div>
           </div>
+        </section>
 
-          <div>
-            <h3 className="text-xs font-medium text-fg-2 mb-2">Recent backups</h3>
+        <section className="card p-6">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <h2 className="text-sm font-semibold text-fg">Path registry</h2>
+              <p className="mt-1 text-sm text-fg-2">
+                {entries.length} entries · {builtinCount} built-in · {userCount} user
+              </p>
+              <p className="mt-1 text-xs text-fg-3">
+                Manage which config files and skills directories aidit scans.
+              </p>
+            </div>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <button
+                onClick={() => setShowResetBuiltinsModal(true)}
+                disabled={resettingBuiltins || builtinCount === 0}
+                className="btn-secondary"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                {resettingBuiltins ? 'Resetting' : 'Reset built-ins'}
+              </button>
+              <Link to="/settings/paths" className="btn-primary">
+                Manage
+                <ExternalLink className="w-3.5 h-3.5" />
+              </Link>
+            </div>
+          </div>
+        </section>
 
-            {backupsError ? (
-              <div className="card p-3 flex items-start gap-2 border-border-strong">
-                <AlertTriangle className="w-3.5 h-3.5 text-fg flex-shrink-0 mt-0.5" />
-                <p className="text-xs text-fg">{backupsError}</p>
+        <section className="card p-6">
+          <h2 className="text-sm font-semibold text-fg mb-4">Backups</h2>
+
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="label">Backup retention</label>
+                <input
+                  type="number"
+                  value={backupRetention || ''}
+                  onChange={(e) => handleRetentionChange(Number(e.target.value))}
+                  min={1}
+                  className="input"
+                />
+                <p className="helper">Number of backups to keep per config file.</p>
               </div>
-            ) : null}
-
-            {backupsLoading && !flatBackups.length ? (
-              <div className="flex items-center justify-center py-8">
-                <Loader className="w-5 h-5 text-fg-2 animate-spin" />
+              <div>
+                <label className="label">Backup directory</label>
+                <div className="flex items-center gap-2">
+                  <span className="input flex-1 truncate font-mono" title={backupDir}>
+                    {displayPath(backupDir)}
+                  </span>
+                  <button onClick={handleOpenBackupFolder} className="btn-secondary flex-shrink-0">
+                    <FolderOpen className="w-4 h-4" />
+                    Open
+                  </button>
+                </div>
               </div>
-            ) : null}
+            </div>
 
-            {!backupsLoading && !backupsError && flatBackups.length === 0 ? (
-              <p className="helper py-3">No backups yet.</p>
-            ) : null}
+            <div>
+              <h3 className="text-xs font-medium text-fg-2 mb-2">Recent backups</h3>
 
-            {flatBackups.length > 0 ? (
-              <div className="rounded-md border border-border overflow-hidden">
-                <table className="w-full text-sm">
-                  <thead className="bg-surface-2 text-fg-2">
-                    <tr>
-                      <th className="text-left font-medium px-3 py-2 text-xs">Config</th>
-                      <th className="text-left font-medium px-3 py-2 text-xs">Filename</th>
-                      <th className="text-left font-medium px-3 py-2 text-xs">Date</th>
-                      <th className="text-left font-medium px-3 py-2 text-xs">Size</th>
-                      <th className="text-right font-medium px-3 py-2 text-xs">Action</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {flatBackups.map((b) => (
-                      <tr
-                        key={`${b.pathEntryId}-${b.filename}`}
-                        className="border-t border-border"
-                      >
-                        <td className="px-3 py-2 text-fg">{b.label}</td>
-                        <td className="px-3 py-2 text-fg-2 font-mono text-xs">{b.filename}</td>
-                        <td className="px-3 py-2 text-fg-2">{relativeTime(b.createdAt)}</td>
-                        <td className="px-3 py-2 text-fg-2">{formatBytes(b.sizeBytes)}</td>
-                        <td className="px-3 py-2 text-right">
-                          <button
-                            onClick={() => setRestoreTarget(b)}
-                            className="btn-secondary btn-sm"
-                          >
-                            Restore
-                          </button>
-                        </td>
+              {backupsError ? (
+                <div className="card p-3 flex items-start gap-2 border-border-strong">
+                  <AlertTriangle className="w-3.5 h-3.5 text-fg flex-shrink-0 mt-0.5" />
+                  <p className="text-xs text-fg">{backupsError}</p>
+                </div>
+              ) : null}
+
+              {backupsLoading && !flatBackups.length ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader className="w-5 h-5 text-fg-2 animate-spin" />
+                </div>
+              ) : null}
+
+              {!backupsLoading && !backupsError && flatBackups.length === 0 ? (
+                <p className="helper py-3">No backups yet.</p>
+              ) : null}
+
+              {flatBackups.length > 0 ? (
+                <div className="rounded-md border border-border overflow-hidden">
+                  <table className="w-full text-sm">
+                    <thead className="bg-surface-2 text-fg-2">
+                      <tr>
+                        <th className="text-left font-medium px-3 py-2 text-xs">Config</th>
+                        <th className="text-left font-medium px-3 py-2 text-xs">Filename</th>
+                        <th className="text-left font-medium px-3 py-2 text-xs">Date</th>
+                        <th className="text-left font-medium px-3 py-2 text-xs">Size</th>
+                        <th className="text-right font-medium px-3 py-2 text-xs">Action</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ) : null}
+                    </thead>
+                    <tbody>
+                      {flatBackups.map((b) => (
+                        <tr
+                          key={`${b.pathEntryId}-${b.filename}`}
+                          className="border-t border-border"
+                        >
+                          <td className="px-3 py-2 text-fg">{b.label}</td>
+                          <td className="px-3 py-2 text-fg-2 font-mono text-xs">{b.filename}</td>
+                          <td className="px-3 py-2 text-fg-2">{relativeTime(b.createdAt)}</td>
+                          <td className="px-3 py-2 text-fg-2">{formatBytes(b.sizeBytes)}</td>
+                          <td className="px-3 py-2 text-right">
+                            <button
+                              onClick={() => setRestoreTarget(b)}
+                              className="btn-secondary btn-sm"
+                            >
+                              Restore
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : null}
+            </div>
           </div>
-        </div>
-      </section>
+        </section>
 
-      <section className="card p-6">
-        <h2 className="text-sm font-semibold text-fg mb-4">About</h2>
-        <div className="space-y-3 text-sm">
-          <div className="flex items-center justify-between">
-            <span className="text-fg-2">Version</span>
-            <span className="font-mono text-fg">0.1.0</span>
+        <section className="card p-6">
+          <h2 className="text-sm font-semibold text-fg mb-4">About</h2>
+          <div className="space-y-3 text-sm">
+            <div className="flex items-center justify-between">
+              <span className="text-fg-2">Version</span>
+              <span className="font-mono text-fg">{__AIDIT_VERSION__}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-fg-2">GitHub</span>
+              <a
+                href="https://github.com/onurceri/aidit"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-fg inline-flex items-center gap-1 hover:underline"
+              >
+                github.com/onurceri/aidit
+                <ExternalLink className="w-3 h-3" />
+              </a>
+            </div>
           </div>
-          <div className="flex items-center justify-between">
-            <span className="text-fg-2">GitHub</span>
-            <a
-              href="https://github.com/anomalyco/aidit"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-fg inline-flex items-center gap-1 hover:underline"
-            >
-              github.com/anomalyco/aidit
-              <ExternalLink className="w-3 h-3" />
-            </a>
-          </div>
-        </div>
-      </section>
+        </section>
 
-      <ConfirmModal
-        open={restoreTarget !== null}
-        title="Restore backup"
-        description={`Restore ${restoreTarget?.filename}? This will overwrite the current config. A backup of the current state will be saved first.`}
-        confirmLabel={restoring ? 'Restoring' : 'Restore'}
-        variant="default"
-        onConfirm={handleRestore}
-        onCancel={() => setRestoreTarget(null)}
-      />
+        <ConfirmModal
+          open={restoreTarget !== null}
+          title="Restore backup"
+          description={`Restore ${restoreTarget?.filename}? This will overwrite the current config. A backup of the current state will be saved first.`}
+          confirmLabel={restoring ? 'Restoring' : 'Restore'}
+          variant="default"
+          onConfirm={handleRestore}
+          onCancel={() => setRestoreTarget(null)}
+        />
 
-      <ConfirmModal
-        open={showResetBuiltinsModal}
-        title="Re-initialize built-ins"
-        description={`This will reset all ${builtinCount} built-in entries to their shipped defaults. User-added entries will not be affected.`}
-        confirmLabel={resettingBuiltins ? 'Resetting' : 'Reset all'}
-        variant="default"
-        onConfirm={handleResetBuiltins}
-        onCancel={() => setShowResetBuiltinsModal(false)}
-      />
-    </div>
+        <ConfirmModal
+          open={showResetBuiltinsModal}
+          title="Re-initialize built-ins"
+          description={`This will reset all ${builtinCount} built-in entries to their shipped defaults. User-added entries will not be affected.`}
+          confirmLabel={resettingBuiltins ? 'Resetting' : 'Reset all'}
+          variant="default"
+          onConfirm={handleResetBuiltins}
+          onCancel={() => setShowResetBuiltinsModal(false)}
+        />
+      </div>
+    </Page>
   );
 }
