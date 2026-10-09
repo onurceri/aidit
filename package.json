@@ -41,6 +41,7 @@
     "bin/",
     "packages/backend/dist/",
     "packages/frontend/dist/",
+    "!**/*.map",
     "LICENSE",
     "README.md",
     "CHANGELOG.md"
